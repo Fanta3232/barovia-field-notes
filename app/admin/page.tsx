@@ -52,6 +52,47 @@ type NpcInstance = {
   notes: string | null
 }
 
+type MonsterTemplate = {
+  id: string
+  name: string
+  source: string | null
+  stat_block: {
+    armor_class?: number
+    hit_points?: number
+    challenge?: string
+    type?: string
+    traits?: { name: string; description: string }[]
+    actions?: { name: string; description: string }[]
+    legendary_actions?: { name: string; description: string }[]
+    [key: string]: any
+  }
+}
+
+function formatStatBlockAsNotes(m: MonsterTemplate): string {
+  const sb = m.stat_block
+  const lines: string[] = []
+  lines.push(`${sb.type ?? ''}${sb.challenge ? ` — CR ${sb.challenge}` : ''}`)
+  if (sb.speed) lines.push(`Speed: ${sb.speed}`)
+  if (sb.senses) lines.push(`Senses: ${sb.senses}`)
+  if (sb.skills) lines.push(`Skills: ${sb.skills}`)
+  if (sb.damage_resistances) lines.push(`Resistances: ${sb.damage_resistances}`)
+  if (sb.condition_immunities) lines.push(`Condition Immunities: ${sb.condition_immunities}`)
+  if (sb.traits?.length) {
+    lines.push('', 'TRAITS:')
+    sb.traits.forEach((t) => lines.push(`• ${t.name}: ${t.description}`))
+  }
+  if (sb.actions?.length) {
+    lines.push('', 'ACTIONS:')
+    sb.actions.forEach((a) => lines.push(`• ${a.name}: ${a.description}`))
+  }
+  if (sb.legendary_actions?.length) {
+    lines.push('', 'LEGENDARY ACTIONS:')
+    sb.legendary_actions.forEach((a) => lines.push(`• ${a.name}: ${a.description}`))
+  }
+  if (m.source) lines.push('', `Source: ${m.source}`)
+  return lines.join('\n')
+}
+
 async function refreshLog(setLog: (rows: LogEntry[]) => void) {
   const { data } = await supabase
     .from('character_activity_log')
@@ -108,6 +149,9 @@ export default function AdminPage() {
   const [openNpcId, setOpenNpcId] = useState<string | null>(null)
   const [npcHpAdjust, setNpcHpAdjust] = useState('')
 
+  const [monsterLibrary, setMonsterLibrary] = useState<MonsterTemplate[]>([])
+  const [monsterSearch, setMonsterSearch] = useState('')
+
   // Which characters actually show in the live Party Overview — a personal, per-browser
   // preference (not everyone shows up to every session), persisted so it survives a refresh.
   const [trackedIds, setTrackedIds] = useState<string[] | null>(null) // null = "not loaded yet", show all
@@ -129,13 +173,14 @@ export default function AdminPage() {
 
   useEffect(() => {
     async function load() {
-      const [charsRes, invRes, condRes, itemsRes, notesRes, npcsRes] = await Promise.all([
+      const [charsRes, invRes, condRes, itemsRes, notesRes, npcsRes, monstersRes] = await Promise.all([
         supabase.from('characters').select('id, name, level, current_hp, max_hp, temp_hp, strength, dexterity, constitution, wisdom, class:class_id(name), subclass:subclass_id(name)').eq('is_quickstart_template', false).order('name'),
         supabase.from('character_inventory').select('character_id, items:item_id(category, properties)').eq('equipped', true),
         supabase.from('character_conditions').select('character_id, conditions:condition_id(name)'),
         supabase.from('items').select('id, name, category').order('name'),
         supabase.from('campaign_notes').select('id, content').limit(1),
         supabase.from('npc_instances').select('*').order('created_at'),
+        supabase.from('monsters').select('id, name, source, stat_block').order('name'),
       ])
       setParty((charsRes.data ?? []) as unknown as PartyMember[])
       setEquippedArmor((invRes.data ?? []) as unknown as EquippedItem[])
@@ -144,6 +189,7 @@ export default function AdminPage() {
       const notesRow = (notesRes.data ?? [])[0] as { id: string; content: string | null } | undefined
       setCampaignNotes(notesRow ? { id: notesRow.id, content: notesRow.content ?? '' } : null)
       setNpcs((npcsRes.data ?? []) as NpcInstance[])
+      setMonsterLibrary((monstersRes.data ?? []) as MonsterTemplate[])
       await refreshLog(setLog)
       setLoading(false)
     }
@@ -275,6 +321,16 @@ export default function AdminPage() {
   function clearInitiative() {
     setCombatants([])
     setCurrentTurn(0)
+  }
+
+  async function spawnFromLibrary(m: MonsterTemplate) {
+    const maxHp = m.stat_block.hit_points ?? 10
+    const ac = m.stat_block.armor_class ?? 10
+    const { data } = await supabase.from('npc_instances').insert({
+      name: m.name, max_hp: maxHp, current_hp: maxHp, armor_class: ac, notes: formatStatBlockAsNotes(m),
+    }).select().single()
+    if (data) setNpcs((prev) => [...prev, data as NpcInstance])
+    setMonsterSearch('')
   }
 
   async function addNpc() {
@@ -509,6 +565,38 @@ export default function AdminPage() {
           <button onClick={() => setAddNpcOpen((o) => !o)} className="text-sm border border-blood-bright/50 text-blood-bright rounded-sm px-3 py-1 hover:bg-blood/20 transition-colors">
             {addNpcOpen ? 'Cancel' : '+ Add NPC'}
           </button>
+        </div>
+
+        <div className="mb-3">
+          <input
+            type="text"
+            value={monsterSearch}
+            onChange={(e) => setMonsterSearch(e.target.value)}
+            placeholder={`Search ${monsterLibrary.length} known stat block${monsterLibrary.length === 1 ? '' : 's'}… (e.g. Strahd, Wereraven)`}
+            className="w-full bg-ink border border-mist rounded-sm p-2 text-sm focus:border-blood-bright/50 outline-none"
+          />
+          {monsterSearch && (
+            <div className="border border-mist rounded-sm max-h-52 overflow-y-auto mt-1.5">
+              {monsterLibrary
+                .filter((m) => m.name.toLowerCase().includes(monsterSearch.toLowerCase()))
+                .map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => spawnFromLibrary(m)}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-blood/10 transition-colors flex justify-between items-center border-b border-mist/30 last:border-0"
+                  >
+                    <span>
+                      {m.name}
+                      {m.stat_block.challenge && <span className="text-parchment/40 text-xs"> · CR {m.stat_block.challenge}</span>}
+                    </span>
+                    <span className="text-xs text-blood-bright">+ Spawn</span>
+                  </button>
+                ))}
+              {monsterLibrary.filter((m) => m.name.toLowerCase().includes(monsterSearch.toLowerCase())).length === 0 && (
+                <p className="px-3 py-2 text-sm text-parchment/40 italic">No matches in the library yet — use + Add NPC for a one-off.</p>
+              )}
+            </div>
+          )}
         </div>
 
         {addNpcOpen && (
