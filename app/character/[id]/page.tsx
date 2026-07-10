@@ -61,7 +61,7 @@ type InventoryRow = {
   equipped: boolean
   items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null; category: string; properties: Record<string, any>; weapon_range: string | null } | null
 }
-type CurrencyRow = { gp: number; sp: number; cp: number; pp: number; ep: number }
+type CurrencyRow = { gp: number; sp: number; cp: number; pp: number }
 type ClassFeatureRow = { name: string; description: string; level: number }
 type SpellSlotRow = { slot_level: number; max_slots: number; used_slots: number }
 type ResourceRow = { name: string; max_value: number; current_value: number; recharge: string }
@@ -123,7 +123,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         supabase.from('character_feats').select('source, feats:feat_id(name, description, category)').eq('character_id', params.id),
         supabase.from('character_spells').select('is_prepared, is_always_known, spells:spell_id(name, level, school, description)').eq('character_id', params.id),
         supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity, category, properties, weapon_range)').eq('character_id', params.id),
-        supabase.from('character_currency').select('gp, sp, cp, pp, ep').eq('character_id', params.id).single(),
+        supabase.from('character_currency').select('gp, sp, cp, pp').eq('character_id', params.id).single(),
         supabase.from('character_spell_slots').select('slot_level, max_slots, used_slots').eq('character_id', params.id),
         supabase.from('character_resources').select('name, max_value, current_value, recharge').eq('character_id', params.id),
         supabase.from('character_active_effects').select('effect_name, is_active').eq('character_id', params.id),
@@ -511,7 +511,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
 
-        <section className="col-span-3 space-y-4">
+        <section className="col-span-4 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
@@ -542,26 +542,38 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               value={`${character.exhaustion_level} / 6`}
             />
             <div className="mt-3 pt-3 border-t border-mist/40">
-              <Tooltip
-                label={<p className="text-[10px] text-parchment/40 uppercase tracking-wide text-center mb-1.5">Passive Scores (no roll needed)</p>}
-                title="Passive Scores"
-                body="10 + the skill's usual bonus, used instead of rolling when you're not actively trying — like whether you'd simply notice an ambush, or how likely a hidden creature is to notice you back."
-              />
-              <div className="grid grid-cols-4 gap-1 text-center">
+              <p className="text-[10px] text-parchment/40 uppercase tracking-wide text-center mb-2">Passive Scores (no roll needed)</p>
+              <div className="grid grid-cols-2 gap-x-2 gap-y-2 text-center">
                 <div>
-                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Perc.</div>
+                  <Tooltip
+                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Perception</div>}
+                    title="Passive Perception"
+                    body="How likely you are to notice something without actively searching — spotting an ambush, a lurker in the shadows, or an obvious trap in passing."
+                  />
                   <div className="text-candle text-sm">{10 + skillBonus('Perception')}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Inv.</div>
+                  <Tooltip
+                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Investigation</div>}
+                    title="Passive Investigation"
+                    body="How likely you are to piece together a clue or spot a detail without deliberately searching for it."
+                  />
                   <div className="text-candle text-sm">{10 + skillBonus('Investigation')}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Ins.</div>
+                  <Tooltip
+                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Insight</div>}
+                    title="Passive Insight"
+                    body="How likely you are to sense someone's lying or read their true intent without actively studying them."
+                  />
                   <div className="text-candle text-sm">{10 + skillBonus('Insight')}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Stea.</div>
+                  <Tooltip
+                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Stealth</div>}
+                    title="Passive Stealth"
+                    body="How hard you are to notice while trying to stay hidden — this is the number a creature's Perception check has to beat to spot you."
+                  />
                   <div className="text-candle text-sm">{10 + skillBonus('Stealth')}</div>
                 </div>
               </div>
@@ -629,6 +641,60 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             )}
           </div>
 
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] text-parchment/40 uppercase tracking-wide text-left">
+                  <th className="font-normal pb-1">Name</th>
+                  <th className="font-normal pb-1">
+                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better." />
+                  </th>
+                  <th className="font-normal pb-1">
+                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in." />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                  <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
+                  <td className="py-1 pr-2 text-parchment/70">
+                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                  </td>
+                  <td className="py-1 text-parchment/50">
+                    1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
+                  </td>
+                </tr>
+                {equippedWeapons.map((row) => {
+                  const bonus = weaponAttackBonus(row)
+                  const dmg = weaponDamage(row)
+                  return (
+                    <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                      <td className="py-1 pr-2">{row.items?.name}</td>
+                      <td className="py-1 pr-2">{bonus >= 0 ? `+${bonus}` : bonus}</td>
+                      <td className="py-1 text-parchment/70">
+                        {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            {spellcastingAbility && (
+              <div className="text-xs text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+                <Tooltip
+                  label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
+                  title="Spell Attack Bonus"
+                  body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead."
+                />
+                {' · '}
+                <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="col-span-4 space-y-4">
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
             <div className="panel rounded-sm p-4">
               <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
@@ -651,9 +717,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Languages</h2>
             <p className="text-sm">{languages.map((l) => l.language).join(', ') || 'Common'}</p>
           </div>
-        </section>
 
-        <section className="col-span-2 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
             {character.background?.feature_name ? (
@@ -726,74 +790,20 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Currency</h2>
             {currency ? (
-              <div className="grid grid-cols-5 gap-1.5 text-center">
-                {([['cp', 'CP'], ['sp', 'SP'], ['ep', 'EP'], ['gp', 'GP'], ['pp', 'PP']] as const).map(([field, label]) => (
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {([['cp', 'CP'], ['sp', 'SP'], ['gp', 'GP'], ['pp', 'PP']] as const).map(([field, label]) => (
                   <div key={field}>
                     <div className="text-[10px] text-parchment/40 uppercase tracking-wide mb-1">{label}</div>
                     <input
                       type="number"
                       defaultValue={currency[field]}
                       onBlur={(e) => updateCurrency(field, Number(e.target.value))}
-                      className="w-full bg-ink border border-mist rounded-sm text-center text-sm py-1 text-parchment focus:border-candle/50 outline-none"
+                      className="w-full bg-ink border border-mist rounded-sm text-center text-base py-2 text-parchment focus:border-candle/50 outline-none"
                     />
                   </div>
                 ))}
               </div>
             ) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
-          </div>
-        </section>
-
-        <section className="col-span-3 space-y-4">
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[10px] text-parchment/40 uppercase tracking-wide text-left">
-                  <th className="font-normal pb-1">Name</th>
-                  <th className="font-normal pb-1">
-                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better." />
-                  </th>
-                  <th className="font-normal pb-1">
-                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in." />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                  <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
-                  <td className="py-1 pr-2 text-parchment/70">
-                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
-                  </td>
-                  <td className="py-1 text-parchment/50">
-                    1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
-                  </td>
-                </tr>
-                {equippedWeapons.map((row) => {
-                  const bonus = weaponAttackBonus(row)
-                  const dmg = weaponDamage(row)
-                  return (
-                    <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                      <td className="py-1 pr-2">{row.items?.name}</td>
-                      <td className="py-1 pr-2">{bonus >= 0 ? `+${bonus}` : bonus}</td>
-                      <td className="py-1 text-parchment/70">
-                        {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            {spellcastingAbility && (
-              <div className="text-xs text-parchment/50 mt-3 pt-3 border-t border-mist/40">
-                <Tooltip
-                  label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
-                  title="Spell Attack Bonus"
-                  body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead."
-                />
-                {' · '}
-                <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
-              </div>
-            )}
           </div>
         </section>
 
