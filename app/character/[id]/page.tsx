@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Tooltip from '@/components/Tooltip'
 import Modal from '@/components/Modal'
-import { ALL_SKILLS, SKILL_ABILITY } from '@/lib/types'
+import { ALL_SKILLS, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/types'
 
 type FullCharacter = {
   id: string
@@ -329,6 +329,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     setRoleplayModalOpen(false)
   }
 
+  async function updateCurrency(field: keyof CurrencyRow, value: number) {
+    const clamped = Math.max(0, Math.floor(value) || 0)
+    setCurrency((prev) => prev ? { ...prev, [field]: clamped } : prev)
+    await supabase.from('character_currency').update({ [field]: clamped }).eq('character_id', params.id)
+  }
+
   function toggleContainer(rowId: string) {
     setExpandedContainers((prev) => {
       const next = new Set(prev)
@@ -477,9 +483,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     <span className="text-sm">{character[ab]} ({modifier(character[ab])})</span>
                   </div>
                   <div className="flex justify-between text-xs mb-1.5">
-                    <span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>
-                      Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}
-                    </span>
+                    <Tooltip
+                      label={<span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}</span>}
+                      title={`${label} Saving Throw`}
+                      body="Rolled to resist an effect trying to happen to you — like being knocked prone, thrown from a cliff, or gripped by a spell. Different abilities cover different kinds of resistance."
+                    />
                     <span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>{saveBonus >= 0 ? `+${saveBonus}` : saveBonus}</span>
                   </div>
                   {relatedSkills.map((skillName) => {
@@ -487,10 +495,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     const proficient = !!skillRow
                     const bonus = skillBonus(skillName)
                     return (
-                      <div key={skillName} className="flex justify-between text-xs pl-3 mb-0.5">
-                        <span className={proficient ? 'text-candle' : 'text-parchment/50'}>
-                          {skillName}{skillRow?.expertise ? ' *' : ''}
-                        </span>
+                      <div key={skillName} className="flex justify-between text-xs pl-3 mb-0.5 py-0.5 rounded-sm hover:bg-mist/10 transition-colors -mx-1 px-1">
+                        <Tooltip
+                          label={<span className={proficient ? 'text-candle' : 'text-parchment/50'}>{skillName}{skillRow?.expertise ? ' *' : ''}</span>}
+                          title={skillName}
+                          body={`${SKILL_DESCRIPTIONS[skillName]}${skillRow?.expertise ? ' (Expertise: proficiency bonus is doubled for this skill.)' : ''}`}
+                        />
                         <span className={proficient ? 'text-candle' : 'text-parchment/50'}>{bonus >= 0 ? `+${bonus}` : bonus}</span>
                       </div>
                     )
@@ -505,27 +515,55 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
-            <Row label="Armor Class" value={String(currentAC)} />
-            {spellSaveDC != null && <Row label="Spell Save DC" value={String(spellSaveDC)} />}
-            <Row label="Initiative" value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)} />
-            <Row label="Speed" value={`${character.speed} ft`} />
-            <Row label="Proficiency Bonus" value={`+${PROF_BONUS}`} />
+            <Row
+              label={<Tooltip label="Armor Class" title="Armor Class (AC)" body="How hard you are to hit. An attacker's d20 roll plus their attack bonus must meet or beat this number to hit you." />}
+              value={String(currentAC)}
+            />
+            {spellSaveDC != null && (
+              <Row
+                label={<Tooltip label="Spell Save DC" title="Spell Save DC" body="The target number a creature must meet or beat on its saving throw to resist or reduce the effect of your spell. Doesn't apply to spells that use an attack roll instead." />}
+                value={String(spellSaveDC)}
+              />
+            )}
+            <Row
+              label={<Tooltip label="Initiative" title="Initiative" body="Added to a d20 roll at the start of combat. Highest total goes first, and that turn order holds for the rest of the fight." />}
+              value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)}
+            />
+            <Row
+              label={<Tooltip label="Speed" title="Speed" body="How far you can move, in feet, on your turn. Difficult terrain, being Prone, or certain conditions can reduce how far that movement actually gets you." />}
+              value={`${character.speed} ft`}
+            />
+            <Row
+              label={<Tooltip label="Proficiency Bonus" title="Proficiency Bonus" body="Added to attack rolls, ability checks, and saving throws you're proficient in. It grows as you level up (still +2 at level 1 — this whole app is level-1-only for now)." />}
+              value={`+${PROF_BONUS}`}
+            />
             <Row
               label={<Tooltip label="Exhaustion" title="Exhaustion" body="2014 rules: a TIERED effects table, not a flat penalty. 1 disadvantage on ability checks, 2 speed halved, 3 disadvantage on attacks/saves, 4 HP max halved, 5 speed 0, 6 death." />}
               value={`${character.exhaustion_level} / 6`}
             />
-            <div className="grid grid-cols-3 gap-1 mt-3 pt-3 border-t border-mist/40 text-center">
-              <div>
-                <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Perception</div>
-                <div className="text-candle text-sm">{10 + skillBonus('Perception')}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Investigation</div>
-                <div className="text-candle text-sm">{10 + skillBonus('Investigation')}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Insight</div>
-                <div className="text-candle text-sm">{10 + skillBonus('Insight')}</div>
+            <div className="mt-3 pt-3 border-t border-mist/40">
+              <Tooltip
+                label={<p className="text-[10px] text-parchment/40 uppercase tracking-wide text-center mb-1.5">Passive Scores (no roll needed)</p>}
+                title="Passive Scores"
+                body="10 + the skill's usual bonus, used instead of rolling when you're not actively trying — like whether you'd simply notice an ambush, or how likely a hidden creature is to notice you back."
+              />
+              <div className="grid grid-cols-4 gap-1 text-center">
+                <div>
+                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Perc.</div>
+                  <div className="text-candle text-sm">{10 + skillBonus('Perception')}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Inv.</div>
+                  <div className="text-candle text-sm">{10 + skillBonus('Investigation')}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Ins.</div>
+                  <div className="text-candle text-sm">{10 + skillBonus('Insight')}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Stea.</div>
+                  <div className="text-candle text-sm">{10 + skillBonus('Stealth')}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -533,7 +571,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
             <div className="flex justify-between items-center mb-2">
-              <span className="text-sm">Successes</span>
+              <Tooltip
+                label={<span className="text-sm">Successes</span>}
+                title="Death Saving Throws"
+                body="At 0 HP, roll a d20 at the start of each of your turns: 10 or higher is a success, lower is a failure. 3 successes stabilizes you at 0 HP; 3 failures means you die. A natural 20 instead returns you to 1 HP, and any damage taken while at 0 HP counts as an automatic failure (two if it's a critical hit)."
+              />
               <div className="flex gap-1">
                 {[0, 1, 2].map((i) => (
                   <button key={i} onClick={() => setDeathSave('success', i)}
@@ -554,7 +596,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               <button onClick={resetDeathSaves} className="text-xs text-candle hover:text-parchment mb-2">Reset</button>
             )}
             <div className="flex justify-between items-center text-sm pt-2 border-t border-mist/40">
-              <span>Hit Dice</span>
+              <Tooltip
+                label={<span>Hit Dice</span>}
+                title="Hit Dice"
+                body="Spend one during a short rest to regain HP (roll the die and add your Constitution modifier, minimum 1 HP). You regain up to half your total hit dice (minimum 1) whenever you finish a long rest."
+              />
               <div className="flex items-center gap-2">
                 <button onClick={spendHitDie} disabled={character.hit_dice_remaining <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
                 <span>{character.hit_dice_remaining} / {character.hit_dice_total} (d{character.class?.hit_die ?? 8})</span>
@@ -634,16 +680,23 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           {resources.length > 0 && (
             <div className="panel rounded-sm p-4">
               <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Resources</h2>
-              {resources.map((r) => (
-                <div key={r.name} className="flex justify-between items-center text-sm mb-1.5">
-                  <span>{r.name}</span>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => adjustResource(r.name, -1)} disabled={r.current_value <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
-                    <span>{r.current_value} / {r.max_value} <span className="text-parchment/40 text-xs">({r.recharge === 'short_rest' ? 'short rest' : 'long rest'})</span></span>
-                    <button onClick={() => adjustResource(r.name, 1)} disabled={r.current_value >= r.max_value} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">+</button>
+              {resources.map((r) => {
+                const featureText = classFeatures.find((f) => f.name === r.name || r.name.includes(f.name) || f.name.includes(r.name))?.description
+                return (
+                  <div key={r.name} className="flex justify-between items-center text-sm mb-1.5">
+                    {featureText ? (
+                      <Tooltip label={<span>{r.name}</span>} title={r.name} body={featureText} />
+                    ) : (
+                      <span>{r.name}</span>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => adjustResource(r.name, -1)} disabled={r.current_value <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
+                      <span>{r.current_value} / {r.max_value} <span className="text-parchment/40 text-xs">({r.recharge === 'short_rest' ? 'short rest' : 'long rest'})</span></span>
+                      <button onClick={() => adjustResource(r.name, 1)} disabled={r.current_value >= r.max_value} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">+</button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
@@ -672,48 +725,74 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Currency</h2>
-            {currency ? <p className="text-sm">{currency.gp} gp{currency.sp ? `, ${currency.sp} sp` : ''}{currency.cp ? `, ${currency.cp} cp` : ''}</p> : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
+            {currency ? (
+              <div className="grid grid-cols-5 gap-1.5 text-center">
+                {([['cp', 'CP'], ['sp', 'SP'], ['ep', 'EP'], ['gp', 'GP'], ['pp', 'PP']] as const).map(([field, label]) => (
+                  <div key={field}>
+                    <div className="text-[10px] text-parchment/40 uppercase tracking-wide mb-1">{label}</div>
+                    <input
+                      type="number"
+                      defaultValue={currency[field]}
+                      onBlur={(e) => updateCurrency(field, Number(e.target.value))}
+                      className="w-full bg-ink border border-mist rounded-sm text-center text-sm py-1 text-parchment focus:border-candle/50 outline-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
           </div>
         </section>
 
         <section className="col-span-3 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
-            {equippedWeapons.length === 0 ? (
-              <p className="text-xs text-parchment/40 italic">No weapons equipped.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-[10px] text-parchment/40 uppercase tracking-wide text-left">
-                    <th className="font-normal pb-1">Name</th>
-                    <th className="font-normal pb-1">Bonus</th>
-                    <th className="font-normal pb-1">Damage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {equippedWeapons.map((row) => {
-                    const bonus = weaponAttackBonus(row)
-                    const dmg = weaponDamage(row)
-                    return (
-                      <tr key={row.id}>
-                        <td className="py-1 pr-2">{row.items?.name}</td>
-                        <td className="py-1 pr-2">{bonus >= 0 ? `+${bonus}` : bonus}</td>
-                        <td className="py-1 text-parchment/70">
-                          {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] text-parchment/40 uppercase tracking-wide text-left">
+                  <th className="font-normal pb-1">Name</th>
+                  <th className="font-normal pb-1">
+                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better." />
+                  </th>
+                  <th className="font-normal pb-1">
+                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in." />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                  <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
+                  <td className="py-1 pr-2 text-parchment/70">
+                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                  </td>
+                  <td className="py-1 text-parchment/50">
+                    1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
+                  </td>
+                </tr>
+                {equippedWeapons.map((row) => {
+                  const bonus = weaponAttackBonus(row)
+                  const dmg = weaponDamage(row)
+                  return (
+                    <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                      <td className="py-1 pr-2">{row.items?.name}</td>
+                      <td className="py-1 pr-2">{bonus >= 0 ? `+${bonus}` : bonus}</td>
+                      <td className="py-1 text-parchment/70">
+                        {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
             {spellcastingAbility && (
-              <p className="text-xs text-parchment/50 mt-3 pt-3 border-t border-mist/40">
-                Spell Attack: {(() => {
-                  const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2)
-                  return b >= 0 ? `+${b}` : b
-                })()} · Spell Save DC: {spellSaveDC}
-              </p>
+              <div className="text-xs text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+                <Tooltip
+                  label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
+                  title="Spell Attack Bonus"
+                  body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead."
+                />
+                {' · '}
+                <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
+              </div>
             )}
           </div>
         </section>
@@ -763,9 +842,15 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <div className="flex justify-between items-baseline mb-3">
               <h2 className="font-display text-sm text-candle uppercase tracking-wide">Inventory</h2>
-              <span className={`text-xs ${totalUnitsCarried > carryCapacity ? 'text-blood-bright' : 'text-parchment/50'}`}>
-                {totalUnitsCarried} / {carryCapacity} units{totalUnitsCarried > carryCapacity ? ' — encumbered' : ''}
-              </span>
+              <Tooltip
+                label={
+                  <span className={`text-xs ${totalUnitsCarried > carryCapacity ? 'text-blood-bright' : 'text-parchment/50'}`}>
+                    {totalUnitsCarried} / {carryCapacity} units{totalUnitsCarried > carryCapacity ? ' — encumbered' : ''}
+                  </span>
+                }
+                title="Carry Capacity"
+                body="A house rule, not official PHB math: capacity is 2× your Strength score (a Backpack doubles that again, once). 'Units' are an abstracted weight, not literal pounds — see any item's tooltip for its unit cost. Going over capacity is shown as a warning only; it doesn't automatically reduce your speed, that's left to the table's judgment."
+              />
             </div>
             {topLevelInventory.length ? topLevelInventory.map((row) => {
               const name = row.items?.name ?? row.item_name ?? 'Unknown item'

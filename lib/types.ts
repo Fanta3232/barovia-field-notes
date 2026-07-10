@@ -134,6 +134,29 @@ export const SKILL_ABILITY: Record<string, keyof AbilityScores> = {
   Deception: 'charisma', Intimidation: 'charisma', Performance: 'charisma', Persuasion: 'charisma',
 }
 
+// Short, plain-language one-liners for hover tooltips — the goal is a new player never needs
+// to open a book to know what a skill covers.
+export const SKILL_DESCRIPTIONS: Record<string, string> = {
+  Athletics: 'Climb, jump, swim, or grapple using raw physical power.',
+  Acrobatics: 'Balance, tumble, or stay on your feet in tricky physical situations.',
+  'Sleight of Hand': 'Pick a pocket, palm an object, or perform manual trickery unnoticed.',
+  Stealth: 'Conceal yourself from enemies, slip past guards, or move silently.',
+  Arcana: 'Recall lore about spells, magic items, and magical traditions.',
+  History: 'Recall lore about past events, civilizations, and wars.',
+  Investigation: 'Deduce clues, find hidden details, or figure out how something works.',
+  Nature: 'Recall lore about terrain, plants, animals, and weather.',
+  Religion: 'Recall lore about deities, rites, prayers, and holy symbols.',
+  'Animal Handling': "Calm, control, or read an animal's intentions.",
+  Insight: "Read a creature's true intentions, and sense if it's lying.",
+  Medicine: 'Diagnose illness, stabilize the dying, or treat injuries.',
+  Perception: 'Notice things using sight, sound, smell, or touch.',
+  Survival: 'Track quarry, forage for food, or navigate the wilderness.',
+  Deception: 'Convincingly hide the truth, through lies or misdirection.',
+  Intimidation: 'Influence someone through threats, hostile action, or presence.',
+  Performance: 'Delight an audience with music, dance, acting, or storytelling.',
+  Persuasion: 'Influence someone through tact, social grace, or good arguments.',
+}
+
 export const ALIGNMENTS = [
   'Lawful Good', 'Neutral Good', 'Chaotic Good',
   'Lawful Neutral', 'True Neutral', 'Chaotic Neutral',
