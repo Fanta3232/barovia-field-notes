@@ -39,7 +39,7 @@ export default function Tooltip({ label, title, subtitle, body, className, block
     : { onMouseEnter: () => setOpen(true), onMouseLeave: () => setOpen(false) }
 
   return (
-    <span className={`relative ${block ? 'block mb-1.5' : 'inline-block'}`} ref={ref}>
+    <span className={`relative ${block ? 'block mb-2.5' : 'inline-block'}`} ref={ref}>
       <span
         {...triggerProps}
         tabIndex={0}
@@ -47,7 +47,7 @@ export default function Tooltip({ label, title, subtitle, body, className, block
         onBlur={() => setOpen(false)}
         className={
           className ??
-          'text-candle underline decoration-dotted decoration-candle/50 underline-offset-2 cursor-help'
+          `text-candle underline decoration-dotted decoration-candle/50 underline-offset-2 cursor-help ${block ? 'block' : ''}`
         }
       >
         {label}

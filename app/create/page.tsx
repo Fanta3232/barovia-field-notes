@@ -338,12 +338,23 @@ export default function CreateCharacterPage() {
     }
     const characterId = character.id
 
-    // currency: class gold option (rare in our verified 2014 data) or shop leftover budget
+    // currency: class gold option (rare in our verified 2014 data), shop leftover budget, and
+    // gold embedded in background equipment text ("Belt pouch (15 gp)", "Purse (25 gp)", or a
+    // bare "5 gp" entry like Hermit's). That embedded gold was previously silently dropped —
+    // the pouch/purse showed up as an inventory item, but its stated value never reached the
+    // currency tracker at all.
     const classGold = (!useShop && classEquipChoice)
       ? (selectedClass?.starting_equipment.find((o) => o.label === classEquipChoice)?.gold ?? 0)
       : 0
     const shopLeftoverGold = useShop ? Math.max(0, SHOP_BUDGET - shopCart.reduce((s, i) => s + i.cost_gp, 0)) : 0
-    await supabase.from('character_currency').insert({ character_id: characterId, gp: Math.round(classGold + shopLeftoverGold) })
+    let bgExtraGold = 0
+    if (selectedBackground) {
+      for (const e of selectedBackground.equipment) {
+        const goldMatch = e.item.match(/(\d+)\s*gp\b/i)
+        if (goldMatch) bgExtraGold += parseInt(goldMatch[1], 10) * (e.qty ?? 1)
+      }
+    }
+    await supabase.from('character_currency').insert({ character_id: characterId, gp: Math.round(classGold + shopLeftoverGold + bgExtraGold) })
 
     // feats: fighting style, variant human feat
     const featInserts: { character_id: string; feat_id: string; source: string }[] = []
@@ -497,7 +508,8 @@ export default function CreateCharacterPage() {
     }
     if (selectedBackground) {
       for (const e of selectedBackground.equipment) {
-        await insertItemByName(e.item, e.qty, null)
+        const isPureCurrency = /^\d+\s*gp$/i.test(e.item.trim())
+        if (!isPureCurrency) await insertItemByName(e.item, e.qty, null)
       }
     }
 

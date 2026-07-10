@@ -46,6 +46,7 @@ type InventoryRow = {
   quantity: number
   item_name: string | null
   parent_inventory_id: string | null
+  equipped: boolean
   items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null } | null
 }
 type CurrencyRow = { gp: number; sp: number; cp: number; pp: number; ep: number }
@@ -96,7 +97,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         supabase.from('character_languages').select('language').eq('character_id', params.id),
         supabase.from('character_feats').select('source, feats:feat_id(name, description, category)').eq('character_id', params.id),
         supabase.from('character_spells').select('is_prepared, is_always_known, spells:spell_id(name, level, school, description)').eq('character_id', params.id),
-        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, items:item_id(name, description, weight_units, is_container, container_capacity)').eq('character_id', params.id),
+        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity)').eq('character_id', params.id),
         supabase.from('character_currency').select('gp, sp, cp, pp, ep').eq('character_id', params.id).single(),
         supabase.from('character_spell_slots').select('slot_level, max_slots, used_slots').eq('character_id', params.id),
         supabase.from('character_resources').select('name, max_value, current_value, recharge').eq('character_id', params.id),
@@ -148,8 +149,67 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   }
 
   async function moveItem(rowId: string, newParentId: string | null) {
+    if (newParentId) {
+      const container = inventory.find((r) => r.id === newParentId)
+      const moving = inventory.find((r) => r.id === rowId)
+      const capacity = container?.items?.container_capacity
+      if (capacity != null && moving) {
+        const currentlyUsed = inventory
+          .filter((r) => r.parent_inventory_id === newParentId && r.id !== rowId)
+          .reduce((sum, r) => sum + (r.items?.weight_units ?? 1) * r.quantity, 0)
+        const movingWeight = (moving.items?.weight_units ?? 1) * moving.quantity
+        if (currentlyUsed + movingWeight > capacity) {
+          alert(`${container?.items?.name ?? 'That container'} doesn't have room (${currentlyUsed}/${capacity} units used).`)
+          return
+        }
+      }
+    }
     setInventory((prev) => prev.map((r) => r.id === rowId ? { ...r, parent_inventory_id: newParentId } : r))
     await supabase.from('character_inventory').update({ parent_inventory_id: newParentId }).eq('id', rowId)
+  }
+
+  async function toggleEquipped(rowId: string, currentlyEquipped: boolean) {
+    setInventory((prev) => prev.map((r) => r.id === rowId ? { ...r, equipped: !currentlyEquipped } : r))
+    await supabase.from('character_inventory').update({ equipped: !currentlyEquipped }).eq('id', rowId)
+  }
+
+  // Spell slot tracking: cast (use a slot) / recover (get one back, e.g. from a feature or
+  // short rest for Warlocks) buttons drive used_slots directly, matching the same slot_level
+  // a known/prepared spell of that level would consume.
+  async function adjustSlot(slotLevel: number, delta: number) {
+    const slot = spellSlots.find((s) => s.slot_level === slotLevel)
+    if (!slot) return
+    const nextUsed = Math.max(0, Math.min(slot.max_slots, slot.used_slots + delta))
+    setSpellSlots((prev) => prev.map((s) => s.slot_level === slotLevel ? { ...s, used_slots: nextUsed } : s))
+    await supabase.from('character_spell_slots').update({ used_slots: nextUsed }).eq('character_id', params.id).eq('slot_level', slotLevel)
+  }
+
+  // Same use/recover logic for class resources (Rage, Bardic Inspiration, Second Wind, Lay on
+  // Hands, etc.) — these previously only displayed a static current/max with no way to track
+  // usage during a session at all.
+  async function adjustResource(name: string, delta: number) {
+    const res = resources.find((r) => r.name === name)
+    if (!res) return
+    const nextValue = Math.max(0, Math.min(res.max_value, res.current_value + delta))
+    setResources((prev) => prev.map((r) => r.name === name ? { ...r, current_value: nextValue } : r))
+    await supabase.from('character_resources').update({ current_value: nextValue }).eq('character_id', params.id).eq('name', name)
+  }
+
+  async function longRest() {
+    setSpellSlots((prev) => prev.map((s) => ({ ...s, used_slots: 0 })))
+    setResources((prev) => prev.map((r) => ({ ...r, current_value: r.max_value })))
+    await Promise.all([
+      supabase.from('character_spell_slots').update({ used_slots: 0 }).eq('character_id', params.id),
+      ...resources.map((r) => supabase.from('character_resources').update({ current_value: r.max_value }).eq('character_id', params.id).eq('name', r.name)),
+    ])
+  }
+
+  async function shortRest() {
+    const shortRestResources = resources.filter((r) => r.recharge === 'short_rest')
+    setResources((prev) => prev.map((r) => r.recharge === 'short_rest' ? { ...r, current_value: r.max_value } : r))
+    await Promise.all(
+      shortRestResources.map((r) => supabase.from('character_resources').update({ current_value: r.max_value }).eq('character_id', params.id).eq('name', r.name))
+    )
   }
 
   function toggleContainer(rowId: string) {
@@ -164,14 +224,22 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   if (!character) return <main className="p-10 text-blood-bright">No record of this soul.</main>
 
   const availableEffects = character.class ? (CLASS_EFFECTS[character.class.name] ?? []) : []
-  // Carry capacity = Strength score in units (a house-rule design decision, not a PHB-verified
-  // formula — see the weight_units convention documented in schema.sql). Only top-level items
-  // count toward personal capacity; a container's own weight counts, but what's inside it up to
-  // its container_capacity doesn't add further burden.
-  const carryCapacity = character.strength
+  // Carry capacity is a house-rule design decision, not a PHB-verified formula (see the
+  // weight_units convention documented in schema.sql). Base is 2x Strength score; owning a
+  // Backpack doubles that again, but only ever once — a second Backpack doesn't stack, since
+  // you're still just one person wearing one pack. Only top-level, non-equipped items count
+  // toward personal capacity: equipping something (armor, a weapon) represents wearing/wielding
+  // it rather than carrying it, so it stops counting against the limit. A container's own
+  // weight still counts against personal capacity, but what's inside it is checked separately
+  // against that container's own container_capacity, which is now actually enforced — it used
+  // to accept unlimited items regardless of the stated capacity.
+  const hasBackpack = inventory.some((r) => (r.items?.name ?? '').toLowerCase() === 'backpack')
+  const baseCarryCapacity = character.strength * 2
+  const carryCapacity = hasBackpack ? baseCarryCapacity * 2 : baseCarryCapacity
   const topLevelInventory = inventory.filter((r) => !r.parent_inventory_id)
   const containedInventory = (parentId: string) => inventory.filter((r) => r.parent_inventory_id === parentId)
-  const totalUnitsCarried = topLevelInventory.reduce((sum, r) => sum + (r.items?.weight_units ?? 1) * r.quantity, 0)
+  const totalUnitsCarried = topLevelInventory.filter((r) => !r.equipped).reduce((sum, r) => sum + (r.items?.weight_units ?? 1) * r.quantity, 0)
+  const containerUnitsUsed = (containerId: string) => containedInventory(containerId).reduce((sum, r) => sum + (r.items?.weight_units ?? 1) * r.quantity, 0)
   const availableContainers = topLevelInventory.filter((r) => r.items?.is_container)
   const cantrips = charSpells.filter((s) => s.spells.level === 0)
   const knownSpells = charSpells.filter((s) => s.spells.level > 0)
@@ -194,6 +262,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </p>
         </div>
         {character.inspiration && <span className="wax-seal text-xs px-3 py-1 rounded-full font-utility">Inspired</span>}
+        {(spellSlots.length > 0 || resources.length > 0) && (
+          <div className="flex gap-2">
+            <button onClick={shortRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Short Rest</button>
+            <button onClick={longRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Long Rest</button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-12 gap-4">
@@ -256,7 +330,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 <div className="text-sm mb-1.5"><span className="text-candle">Favored Terrain:</span> {character.favored_terrain}</div>
               )}
               {allTraits.map((t) => (
-                <Tooltip key={t.name} label={<span className="block text-sm mb-1.5">{t.name}</span>} title={t.name} body={t.description} />
+                <Tooltip key={t.name} label={<span className="block text-sm mb-1.5">{t.name}</span>} title={t.name} body={t.description} block />
               ))}
             </div>
           )}
@@ -276,7 +350,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
             {character.background?.feature_name ? (
-              <Tooltip label={<span className="block text-sm">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} />
+              <Tooltip label={<span className="block text-sm">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} block />
             ) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
             {character.chosen_tool_proficiency && (
               <p className="text-xs text-parchment/60 mt-2"><span className="text-candle">Tool Proficiency:</span> {character.chosen_tool_proficiency}</p>
@@ -286,13 +360,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Class Features</h2>
             {classFeatures.map((f, i) => (
-              <Tooltip key={i} label={<span className="block text-sm mb-1.5">{f.name}</span>} title={f.name} body={f.description} />
+              <Tooltip key={i} label={<span className="block text-sm mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
-            {classFeat && <Tooltip label={<span className="block text-sm mb-1.5">{classFeat.feats.name} <span className="text-parchment/40 text-xs">(Fighting Style)</span></span>} title={classFeat.feats.name} body={classFeat.feats.description} />}
+            {classFeat && <Tooltip label={<span className="block text-sm mb-1.5">{classFeat.feats.name} <span className="text-parchment/40 text-xs">(Fighting Style)</span></span>} title={classFeat.feats.name} body={classFeat.feats.description} block />}
             {subclassL1Features.map((f) => (
-              <Tooltip key={f.name} label={<span className="block text-sm mb-1.5">{f.name}</span>} title={f.name} body={f.description} />
+              <Tooltip key={f.name} label={<span className="block text-sm mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
-            {variantFeat && <Tooltip label={<span className="block text-sm mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-xs">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} />}
+            {variantFeat && <Tooltip label={<span className="block text-sm mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-xs">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} block />}
             {classFeatures.length === 0 && !classFeat && subclassL1Features.length === 0 && !variantFeat && <p className="text-xs text-parchment/40 italic">None recorded.</p>}
           </div>
 
@@ -300,9 +374,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             <div className="panel rounded-sm p-4">
               <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Resources</h2>
               {resources.map((r) => (
-                <div key={r.name} className="flex justify-between text-sm mb-1">
+                <div key={r.name} className="flex justify-between items-center text-sm mb-1.5">
                   <span>{r.name}</span>
-                  <span>{r.current_value} / {r.max_value} <span className="text-parchment/40 text-xs">({r.recharge === 'short_rest' ? 'short rest' : 'long rest'})</span></span>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => adjustResource(r.name, -1)} disabled={r.current_value <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
+                    <span>{r.current_value} / {r.max_value} <span className="text-parchment/40 text-xs">({r.recharge === 'short_rest' ? 'short rest' : 'long rest'})</span></span>
+                    <button onClick={() => adjustResource(r.name, 1)} disabled={r.current_value >= r.max_value} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">+</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -348,9 +426,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             {spellSlots.length > 0 && (
               <div className="mb-3 pb-3 border-b border-mist/50">
                 {spellSlots.map((sl) => (
-                  <div key={sl.slot_level} className="flex justify-between text-sm">
+                  <div key={sl.slot_level} className="flex justify-between items-center text-sm">
                     <span>{character.class?.spellcasting_type === 'pact' ? 'Pact Magic Slot' : `Level ${sl.slot_level} Slots`}</span>
-                    <span>{sl.max_slots - sl.used_slots} / {sl.max_slots}</span>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => adjustSlot(sl.slot_level, 1)} disabled={sl.used_slots >= sl.max_slots} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
+                      <span>{sl.max_slots - sl.used_slots} / {sl.max_slots}</span>
+                      <button onClick={() => adjustSlot(sl.slot_level, -1)} disabled={sl.used_slots <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">+</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -360,11 +442,22 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             ) : (
               <>
                 {cantrips.map((s) => (
-                  <Tooltip key={s.spells.name} label={<span className="block text-sm mb-1.5">{s.spells.name} <span className="text-parchment/40 text-xs">(cantrip)</span></span>} title={s.spells.name} subtitle={`Cantrip · ${s.spells.school}`} body={s.spells.description} />
+                  <Tooltip key={s.spells.name} label={<span className="block text-sm mb-1.5">{s.spells.name} <span className="text-parchment/40 text-xs">(cantrip)</span></span>} title={s.spells.name} subtitle={`Cantrip · ${s.spells.school}`} body={s.spells.description} block />
                 ))}
-                {knownSpells.map((s) => (
-                  <Tooltip key={s.spells.name} label={<span className="block text-sm mb-1.5">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-xs"> (always prepared)</span> : ''}</span>} title={s.spells.name} subtitle={`Level ${s.spells.level} · ${s.spells.school}`} body={s.spells.description} />
-                ))}
+                {knownSpells.map((s) => {
+                  const matchingSlot = spellSlots.find((sl) => sl.slot_level === s.spells.level)
+                  const canCast = matchingSlot ? matchingSlot.used_slots < matchingSlot.max_slots : false
+                  return (
+                    <div key={s.spells.name} className="flex items-center justify-between mb-1.5">
+                      <Tooltip label={<span className="text-sm">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-xs"> (always prepared)</span> : ''}</span>} title={s.spells.name} subtitle={`Level ${s.spells.level} · ${s.spells.school}`} body={s.spells.description} />
+                      {matchingSlot && (
+                        <button onClick={() => adjustSlot(s.spells.level, 1)} disabled={!canCast} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle">
+                          Cast
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
               </>
             )}
           </div>
@@ -381,6 +474,15 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               const isContainer = row.items?.is_container
               const isExpanded = expandedContainers.has(row.id)
               const children = isContainer ? containedInventory(row.id) : []
+              const capacity = row.items?.container_capacity
+              const usedInContainer = isContainer ? containerUnitsUsed(row.id) : 0
+              const rowWeight = (row.items?.weight_units ?? 1) * row.quantity
+              const fittingContainers = availableContainers.filter((c) => {
+                if (c.id === row.id) return false
+                const cap = c.items?.container_capacity
+                if (cap == null) return true
+                return containerUnitsUsed(c.id) + rowWeight <= cap
+              })
               return (
                 <div key={row.id} className="mb-1.5">
                   <div className="flex items-center justify-between text-sm">
@@ -391,23 +493,35 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                         </button>
                       )}
                       {row.items ? (
-                        <Tooltip label={<span>{row.quantity}× {name}</span>} title={name} body={row.items.description} />
+                        <Tooltip label={<span>{row.quantity}× {name}{row.equipped ? <span className="text-candle text-xs"> (equipped)</span> : ''}</span>} title={name} body={row.items.description} />
                       ) : (
-                        <span>{row.quantity}× {name}</span>
+                        <span>{row.quantity}× {name}{row.equipped ? <span className="text-candle text-xs"> (equipped)</span> : ''}</span>
+                      )}
+                      {isContainer && capacity != null && (
+                        <span className={`text-xs ${usedInContainer > capacity ? 'text-blood-bright' : 'text-parchment/40'}`}>
+                          ({usedInContainer}/{capacity})
+                        </span>
                       )}
                     </div>
-                    {!isContainer && availableContainers.length > 0 && (
-                      <select
-                        defaultValue=""
-                        onChange={(e) => { if (e.target.value) moveItem(row.id, e.target.value) }}
-                        className="bg-ink border border-mist rounded-sm text-xs text-parchment/60 px-1 py-0.5"
-                      >
-                        <option value="" disabled>{'Put in\u2026'}</option>
-                        {availableContainers.map((c) => (
-                          <option key={c.id} value={c.id}>{c.items?.name}</option>
-                        ))}
-                      </select>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {!isContainer && (
+                        <button onClick={() => toggleEquipped(row.id, row.equipped)} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">
+                          {row.equipped ? 'Unequip' : 'Equip'}
+                        </button>
+                      )}
+                      {!isContainer && fittingContainers.length > 0 && (
+                        <select
+                          defaultValue=""
+                          onChange={(e) => { if (e.target.value) moveItem(row.id, e.target.value) }}
+                          className="bg-ink border border-mist rounded-sm text-xs text-parchment/60 px-1 py-0.5"
+                        >
+                          <option value="" disabled>{'Put in\u2026'}</option>
+                          {fittingContainers.map((c) => (
+                            <option key={c.id} value={c.id}>{c.items?.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                   </div>
                   {isContainer && isExpanded && (
                     <div className="ml-6 mt-1.5 pl-2 border-l border-mist/40 space-y-1">
