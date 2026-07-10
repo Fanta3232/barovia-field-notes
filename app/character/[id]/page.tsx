@@ -42,6 +42,7 @@ type FullCharacter = {
   flaws: string | null
   backstory: string | null
   appearance: string | null
+  notes: string | null
   species: { name: string; traits: { name: string; description: string }[] } | null
   species_subrace: { name: string; traits: { name: string; description: string }[] } | null
   background: { name: string; feature_name: string | null; feature_description: string | null } | null
@@ -115,6 +116,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   // (localStorage), for tables that would rather roll physical dice and just want the math.
   const [rollMode, setRollMode] = useState<'normal' | 'advantage' | 'disadvantage'>('normal')
   const [autoRoll, setAutoRoll] = useState(true)
+  const [combatMode, setCombatMode] = useState(false)
   const [rollToast, setRollToast] = useState<string | null>(null)
   const [rollLog, setRollLog] = useState<{ text: string; time: string }[]>([])
   const [lastCrit, setLastCrit] = useState<Record<string, boolean>>({})
@@ -510,6 +512,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     setHpAdjust('')
   }
 
+  async function updateNotes(value: string) {
+    setCharacter((prev) => prev ? { ...prev, notes: value } : prev)
+    await supabase.from('characters').update({ notes: value }).eq('id', params.id)
+  }
+
   async function updateCurrency(field: keyof CurrencyRow, value: number) {
     const clamped = Math.max(0, Math.floor(value) || 0)
     setCurrency((prev) => prev ? { ...prev, [field]: clamped } : prev)
@@ -631,6 +638,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         </div>
         {character.inspiration && <span className="wax-seal text-sm px-3 py-1 rounded-full font-utility">Inspired</span>}
         <div className="flex gap-2">
+          <button
+            onClick={() => setCombatMode(true)}
+            className="text-sm border border-blood-bright/60 text-blood-bright rounded-sm px-3 py-1.5 hover:bg-blood/20 transition-colors font-display tracking-wide"
+          >
+            Combat Mode
+          </button>
           <button onClick={() => setStatusModalOpen(true)} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Status Effects</button>
           <button onClick={openRoleplay} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Backstory</button>
           {(spellSlots.length > 0 || resources.length > 0) && (
@@ -673,6 +686,195 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         />
       </div>
 
+      {combatMode ? (
+        <div className="max-w-lg mx-auto space-y-4">
+          <button
+            onClick={() => setCombatMode(false)}
+            className="w-full text-base border border-blood-bright/60 text-blood-bright rounded-sm py-2.5 hover:bg-blood/20 transition-colors font-display tracking-wide"
+          >
+            Exit Combat Mode
+          </button>
+
+          <div className="panel rounded-sm p-4">
+            <div className="flex justify-between items-center text-lg mb-2">
+              <span>HP</span>
+              <span>{character.current_hp} / {character.max_hp}{character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}</span>
+            </div>
+            <div className="flex gap-1.5 mb-3">
+              <input
+                type="number"
+                value={hpAdjust}
+                onChange={(e) => setHpAdjust(e.target.value)}
+                placeholder="0"
+                className="w-16 bg-ink border border-mist rounded-sm text-center text-base py-2 text-parchment focus:border-candle/50 outline-none"
+              />
+              <button onClick={applyDamage} className="flex-1 text-base border border-blood-bright/50 text-blood-bright rounded-sm py-2 hover:bg-blood/20 transition-colors">Damage</button>
+              <button onClick={applyHealing} className="flex-1 text-base border border-candle/50 text-candle rounded-sm py-2 hover:bg-candle/10 transition-colors">Heal</button>
+              <button onClick={setTempHp} className="flex-1 text-base border border-mist text-parchment/70 rounded-sm py-2 hover:border-candle/50 transition-colors">Temp</button>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-base">
+              <Row label="AC" value={String(currentAC)} />
+              <Row label="Initiative" value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)} onClick={() => rollCheck('Initiative', character.initiative_bonus)} />
+              <Row label="Speed" value={`${character.speed} ft`} />
+              {spellSaveDC != null && <Row label="Spell DC" value={String(spellSaveDC)} />}
+              <Row label="Exhaustion" value={`${character.exhaustion_level} / 6`} />
+            </div>
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-display text-base text-candle uppercase tracking-wide">Death Saves</h2>
+              <button onClick={rollDeathSave} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-3 py-1">Roll</button>
+            </div>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-base">Successes</span>
+              <div className="flex gap-2">
+                {[0, 1, 2].map((i) => (
+                  <button key={i} onClick={() => setDeathSave('success', i)}
+                    className={`w-6 h-6 rounded-full border transition-colors ${character.death_save_successes > i ? 'bg-candle border-candle' : 'border-mist'}`} />
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-base">Failures</span>
+              <div className="flex gap-2">
+                {[0, 1, 2].map((i) => (
+                  <button key={i} onClick={() => setDeathSave('failure', i)}
+                    className={`w-6 h-6 rounded-full border transition-colors ${character.death_save_failures > i ? 'bg-blood-bright border-blood-bright' : 'border-mist'}`} />
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-between items-center text-base pt-2 border-t border-mist/40">
+              <span>Hit Dice</span>
+              <div className="flex items-center gap-2">
+                <button onClick={spendHitDie} disabled={character.hit_dice_remaining <= 0} className="w-7 h-7 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">−</button>
+                <span>{character.hit_dice_remaining} / {character.hit_dice_total} (d{character.class?.hit_die ?? 8})</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-display text-base text-candle uppercase tracking-wide">Status Effects</h2>
+              <button onClick={() => setStatusModalOpen(true)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-3 py-1">Manage</button>
+            </div>
+            {charConditions.length === 0 ? (
+              <p className="text-sm text-parchment/40 italic">None currently applied.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {charConditions.map((c) => (
+                  <span key={c.condition_id} className="wax-seal text-sm px-2.5 py-1 rounded-full">{c.conditions.name}</span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center py-2 border-b border-mist/30">
+                <span className="text-base text-parchment/70">Unarmed Strike</span>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
+                    className="text-base border border-mist rounded-sm px-3 py-1.5 hover:border-candle/50 hover:text-candle transition-colors"
+                  >
+                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                  </button>
+                  <button
+                    onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
+                    className="text-base border border-mist rounded-sm px-3 py-1.5 hover:border-candle/50 hover:text-candle transition-colors"
+                  >
+                    Dmg
+                  </button>
+                </div>
+              </div>
+              {equippedWeapons.map((row) => {
+                const bonus = weaponAttackBonus(row)
+                const dmg = weaponDamage(row)
+                const name = row.items?.name ?? 'Weapon'
+                return (
+                  <div key={row.id} className="flex justify-between items-center py-2 border-b border-mist/30">
+                    <span className="text-base">{name}{lastCrit[row.id] && <span className="text-blood-bright text-sm"> (crit!)</span>}</span>
+                    <div className="flex gap-3">
+                      <button onClick={() => rollAttack(row.id, name, bonus)} className="text-base border border-mist rounded-sm px-3 py-1.5 hover:border-candle/50 hover:text-candle transition-colors">
+                        {bonus >= 0 ? `+${bonus}` : bonus}
+                      </button>
+                      <button onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="text-base border border-mist rounded-sm px-3 py-1.5 hover:border-candle/50 hover:text-candle transition-colors">
+                        Dmg
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {spellcastingAbility && (
+              <p className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+                Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()} · Spell Save DC: {spellSaveDC}
+              </p>
+            )}
+          </div>
+
+          {spellSlots.length > 0 && (
+            <div className="panel rounded-sm p-4">
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Spell Slots</h2>
+              {spellSlots.map((sl) => (
+                <div key={sl.slot_level} className="flex justify-between items-center text-base mb-1">
+                  <span>{character.class?.spellcasting_type === 'pact' ? 'Pact Slot' : `Level ${sl.slot_level}`}</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => adjustSlot(sl.slot_level, 1)} disabled={sl.used_slots >= sl.max_slots} className="w-7 h-7 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">−</button>
+                    <span>{sl.max_slots - sl.used_slots} / {sl.max_slots}</span>
+                    <button onClick={() => adjustSlot(sl.slot_level, -1)} disabled={sl.used_slots <= 0} className="w-7 h-7 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">+</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {resources.length > 0 && (
+            <div className="panel rounded-sm p-4">
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Resources</h2>
+              {resources.map((r) => (
+                <div key={r.name} className="flex justify-between items-center text-base mb-1.5">
+                  <span>{r.name}</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => adjustResource(r.name, -1)} disabled={r.current_value <= 0} className="w-7 h-7 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">−</button>
+                    <span>{r.current_value} / {r.max_value}</span>
+                    <button onClick={() => adjustResource(r.name, 1)} disabled={r.current_value >= r.max_value} className="w-7 h-7 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">+</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Notes</h2>
+            <textarea
+              defaultValue={character.notes ?? ''}
+              onBlur={(e) => updateNotes(e.target.value)}
+              placeholder="Quick jots — an NPC name, a clue, a reminder…"
+              rows={3}
+              className="w-full bg-ink border border-mist rounded-sm p-2 text-base text-parchment focus:border-candle/50 outline-none placeholder:text-parchment/30"
+            />
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
+            {rollLog.length === 0 ? (
+              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {rollLog.map((entry, i) => (
+                  <div key={i} className="text-sm flex gap-2">
+                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
+                    <span className="text-parchment/70">{entry.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-12 gap-4">
         <section className="col-span-4 space-y-4">
           <div className="panel rounded-sm p-4">
@@ -1000,6 +1202,17 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Notes</h2>
+            <textarea
+              defaultValue={character.notes ?? ''}
+              onBlur={(e) => updateNotes(e.target.value)}
+              placeholder="Quick jots — an NPC name, a clue, a reminder for next session…"
+              rows={5}
+              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm text-parchment focus:border-candle/50 outline-none placeholder:text-parchment/30"
+            />
+          </div>
         </section>
 
         <section className="col-start-5 col-span-8 grid grid-cols-2 gap-4">
@@ -1220,6 +1433,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
       </div>
+      )}
     </main>
 
     {rollToast && (
