@@ -42,6 +42,16 @@ type LogEntry = {
 
 type Combatant = { id: string; name: string; initiative: number; isParty: boolean }
 
+type NpcInstance = {
+  id: string
+  name: string
+  max_hp: number
+  current_hp: number
+  temp_hp: number
+  armor_class: number
+  notes: string | null
+}
+
 async function refreshLog(setLog: (rows: LogEntry[]) => void) {
   const { data } = await supabase
     .from('character_activity_log')
@@ -49,6 +59,21 @@ async function refreshLog(setLog: (rows: LogEntry[]) => void) {
     .order('created_at', { ascending: false })
     .limit(75)
   setLog((data ?? []) as unknown as LogEntry[])
+}
+
+async function refreshConditions(setConditions: (rows: ConditionEntry[]) => void) {
+  const { data } = await supabase.from('character_conditions').select('character_id, conditions:condition_id(name)')
+  setConditions((data ?? []) as unknown as ConditionEntry[])
+}
+
+async function refreshNpcs(setNpcs: (rows: NpcInstance[]) => void) {
+  const { data } = await supabase.from('npc_instances').select('*').order('created_at')
+  setNpcs((data ?? []) as NpcInstance[])
+}
+
+async function refreshInventory(setEquippedArmor: (rows: EquippedItem[]) => void) {
+  const { data } = await supabase.from('character_inventory').select('character_id, items:item_id(category, properties)').eq('equipped', true)
+  setEquippedArmor((data ?? []) as unknown as EquippedItem[])
 }
 
 export default function AdminPage() {
@@ -77,14 +102,40 @@ export default function AdminPage() {
   const [newCombatantName, setNewCombatantName] = useState('')
   const [newCombatantInit, setNewCombatantInit] = useState('')
 
+  const [npcs, setNpcs] = useState<NpcInstance[]>([])
+  const [addNpcOpen, setAddNpcOpen] = useState(false)
+  const [newNpc, setNewNpc] = useState({ name: '', max_hp: 10, armor_class: 10, notes: '' })
+  const [openNpcId, setOpenNpcId] = useState<string | null>(null)
+  const [npcHpAdjust, setNpcHpAdjust] = useState('')
+
+  // Which characters actually show in the live Party Overview — a personal, per-browser
+  // preference (not everyone shows up to every session), persisted so it survives a refresh.
+  const [trackedIds, setTrackedIds] = useState<string[] | null>(null) // null = "not loaded yet", show all
+  const [manageTrackedOpen, setManageTrackedOpen] = useState(false)
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem('barovia_dm_tracked_ids')
+    setTrackedIds(stored ? JSON.parse(stored) : null)
+  }, [])
+
+  function toggleTracked(id: string) {
+    setTrackedIds((prev) => {
+      const current = prev ?? party.map((p) => p.id)
+      const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
+      window.localStorage.setItem('barovia_dm_tracked_ids', JSON.stringify(next))
+      return next
+    })
+  }
+
   useEffect(() => {
     async function load() {
-      const [charsRes, invRes, condRes, itemsRes, notesRes] = await Promise.all([
+      const [charsRes, invRes, condRes, itemsRes, notesRes, npcsRes] = await Promise.all([
         supabase.from('characters').select('id, name, level, current_hp, max_hp, temp_hp, strength, dexterity, constitution, wisdom, class:class_id(name), subclass:subclass_id(name)').eq('is_quickstart_template', false).order('name'),
         supabase.from('character_inventory').select('character_id, items:item_id(category, properties)').eq('equipped', true),
         supabase.from('character_conditions').select('character_id, conditions:condition_id(name)'),
         supabase.from('items').select('id, name, category').order('name'),
         supabase.from('campaign_notes').select('id, content').limit(1),
+        supabase.from('npc_instances').select('*').order('created_at'),
       ])
       setParty((charsRes.data ?? []) as unknown as PartyMember[])
       setEquippedArmor((invRes.data ?? []) as unknown as EquippedItem[])
@@ -92,10 +143,34 @@ export default function AdminPage() {
       setItemCatalog((itemsRes.data ?? []) as ItemCatalogRow[])
       const notesRow = (notesRes.data ?? [])[0] as { id: string; content: string | null } | undefined
       setCampaignNotes(notesRow ? { id: notesRow.id, content: notesRow.content ?? '' } : null)
+      setNpcs((npcsRes.data ?? []) as NpcInstance[])
       await refreshLog(setLog)
       setLoading(false)
     }
     load()
+  }, [])
+
+  // Live updates — without this, the panel is just a snapshot from whenever it last loaded,
+  // and a player changing their own HP/currency/conditions on their sheet wouldn't show up
+  // here until a manual refresh.
+  useEffect(() => {
+    const channel = supabase
+      .channel('dm-panel-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'characters' }, (payload) => {
+        const row = (payload.new ?? payload.old) as { id: string }
+        if (payload.eventType === 'DELETE') {
+          setParty((prev) => prev.filter((p) => p.id !== row.id))
+        } else {
+          setParty((prev) => prev.map((p) => p.id === row.id ? { ...p, ...(payload.new as object) } : p))
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'character_conditions' }, () => refreshConditions(setConditions))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'character_inventory' }, () => refreshInventory(setEquippedArmor))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'character_activity_log' }, () => refreshLog(setLog))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'npc_instances' }, () => refreshNpcs(setNpcs))
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [])
 
   // Mirrors the same live-AC logic used on the character sheet, so the party overview isn't
@@ -202,6 +277,53 @@ export default function AdminPage() {
     setCurrentTurn(0)
   }
 
+  async function addNpc() {
+    if (!newNpc.name.trim()) return
+    const { data } = await supabase.from('npc_instances').insert({
+      name: newNpc.name, max_hp: newNpc.max_hp, current_hp: newNpc.max_hp,
+      armor_class: newNpc.armor_class, notes: newNpc.notes || null,
+    }).select().single()
+    if (data) setNpcs((prev) => [...prev, data as NpcInstance])
+    setNewNpc({ name: '', max_hp: 10, armor_class: 10, notes: '' })
+    setAddNpcOpen(false)
+  }
+
+  async function deleteNpc(id: string) {
+    if (!confirm('Remove this NPC? This can\'t be undone.')) return
+    await supabase.from('npc_instances').delete().eq('id', id)
+    setNpcs((prev) => prev.filter((n) => n.id !== id))
+    setCombatants((prev) => prev.filter((c) => c.id !== id))
+    if (openNpcId === id) setOpenNpcId(null)
+  }
+
+  async function applyNpcHp(npc: NpcInstance, kind: 'damage' | 'heal' | 'temp') {
+    const amount = Math.max(0, parseInt(npcHpAdjust) || 0)
+    if (amount === 0) return
+    let newCurrent = npc.current_hp
+    let newTemp = npc.temp_hp
+    if (kind === 'damage') {
+      let remaining = amount
+      if (newTemp > 0) {
+        const absorbed = Math.min(newTemp, remaining)
+        newTemp -= absorbed
+        remaining -= absorbed
+      }
+      newCurrent = Math.max(0, npc.current_hp - remaining)
+    } else if (kind === 'heal') {
+      newCurrent = Math.min(npc.max_hp, npc.current_hp + amount)
+    } else {
+      newTemp = Math.max(npc.temp_hp, amount)
+    }
+    setNpcs((prev) => prev.map((n) => n.id === npc.id ? { ...n, current_hp: newCurrent, temp_hp: newTemp } : n))
+    await supabase.from('npc_instances').update({ current_hp: newCurrent, temp_hp: newTemp }).eq('id', npc.id)
+    setNpcHpAdjust('')
+  }
+
+  function addNpcToInitiative(npc: NpcInstance) {
+    if (combatants.some((c) => c.id === npc.id)) return
+    setCombatants((prev) => [...prev, { id: npc.id, name: npc.name, initiative: 0, isParty: false }].sort((a, b) => b.initiative - a.initiative))
+  }
+
   async function saveCampaignNotes(content: string) {
     if (campaignNotes?.id) {
       await supabase.from('campaign_notes').update({ content, updated_at: new Date().toISOString() }).eq('id', campaignNotes.id)
@@ -214,6 +336,7 @@ export default function AdminPage() {
 
   const filteredItems = itemSearch ? itemCatalog.filter((i) => i.name.toLowerCase().includes(itemSearch.toLowerCase())).slice(0, 30) : []
   const filteredLog = logFilter === 'all' ? log : log.filter((l) => l.character_id === logFilter)
+  const visibleParty = trackedIds === null ? party : party.filter((p) => trackedIds.includes(p.id))
 
   if (loading) return <main className="p-10 text-parchment/60">Reading the DM's screen…</main>
 
@@ -225,9 +348,30 @@ export default function AdminPage() {
       </div>
 
       <div className="panel rounded-sm p-4 mb-4">
-        <h2 className="font-display text-base text-blood-bright mb-3 uppercase tracking-wide">Party Overview</h2>
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="font-display text-base text-blood-bright uppercase tracking-wide">Party Overview <span className="text-parchment/30 text-sm normal-case">(live)</span></h2>
+          <button onClick={() => setManageTrackedOpen((o) => !o)} className="text-sm text-blood-bright hover:text-parchment border border-mist rounded-full px-3 py-1">
+            {manageTrackedOpen ? 'Done' : 'Manage'}
+          </button>
+        </div>
+        {manageTrackedOpen && (
+          <div className="flex flex-wrap gap-2 mb-3 pb-3 border-b border-mist/40">
+            {party.map((m) => {
+              const isTracked = trackedIds === null || trackedIds.includes(m.id)
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => toggleTracked(m.id)}
+                  className={`text-sm rounded-full px-3 py-1 border transition-colors ${isTracked ? 'border-candle text-candle' : 'border-mist text-parchment/40'}`}
+                >
+                  {isTracked ? '✓ ' : ''}{m.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {party.map((m) => {
+          {visibleParty.map((m) => {
             const ac = computeAC(m)
             const conds = conditionsFor(m.id)
             const hpPct = Math.max(0, Math.min(100, (m.current_hp / Math.max(1, m.max_hp)) * 100))
@@ -250,6 +394,7 @@ export default function AdminPage() {
               </Link>
             )
           })}
+          {visibleParty.length === 0 && party.length > 0 && <p className="text-sm text-parchment/40 italic">No characters currently tracked — click Manage to add some.</p>}
           {party.length === 0 && <p className="text-sm text-parchment/40 italic">No characters yet.</p>}
         </div>
       </div>
@@ -356,6 +501,112 @@ export default function AdminPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="panel rounded-sm p-4 mb-4">
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="font-display text-base text-blood-bright uppercase tracking-wide">NPCs &amp; Enemies <span className="text-parchment/30 text-sm normal-case">(live)</span></h2>
+          <button onClick={() => setAddNpcOpen((o) => !o)} className="text-sm border border-blood-bright/50 text-blood-bright rounded-sm px-3 py-1 hover:bg-blood/20 transition-colors">
+            {addNpcOpen ? 'Cancel' : '+ Add NPC'}
+          </button>
+        </div>
+
+        {addNpcOpen && (
+          <div className="border border-mist rounded-sm p-3 mb-3 space-y-2">
+            <input
+              type="text"
+              value={newNpc.name}
+              onChange={(e) => setNewNpc((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Name (e.g. Strahd's Spellcaster, Wolf #2)"
+              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-parchment/40 uppercase">Max HP</label>
+                <input type="number" value={newNpc.max_hp} onChange={(e) => setNewNpc((prev) => ({ ...prev, max_hp: parseInt(e.target.value) || 0 }))} className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1" />
+              </div>
+              <div>
+                <label className="text-xs text-parchment/40 uppercase">Armor Class</label>
+                <input type="number" value={newNpc.armor_class} onChange={(e) => setNewNpc((prev) => ({ ...prev, armor_class: parseInt(e.target.value) || 0 }))} className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1" />
+              </div>
+            </div>
+            <textarea
+              value={newNpc.notes}
+              onChange={(e) => setNewNpc((prev) => ({ ...prev, notes: e.target.value }))}
+              placeholder="Quick stat block — attacks, abilities, resistances, whatever you need at the table"
+              rows={3}
+              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm"
+            />
+            <button onClick={addNpc} disabled={!newNpc.name.trim()} className="text-sm border border-blood-bright/50 text-blood-bright rounded-sm px-4 py-1.5 hover:bg-blood/20 transition-colors disabled:opacity-30">Create</button>
+          </div>
+        )}
+
+        {npcs.length === 0 ? (
+          <p className="text-sm text-parchment/40 italic">No active NPCs.</p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {npcs.map((npc) => {
+              const hpPct = Math.max(0, Math.min(100, (npc.current_hp / Math.max(1, npc.max_hp)) * 100))
+              return (
+                <button
+                  key={npc.id}
+                  onClick={() => setOpenNpcId(npc.id)}
+                  className="border border-mist rounded-sm p-2.5 hover:border-blood-bright/50 transition-colors text-left"
+                >
+                  <div className="text-sm text-candle truncate mb-1">{npc.name}</div>
+                  <div className="h-1 bg-mist/30 rounded-full overflow-hidden mb-1">
+                    <div className={`h-full ${hpPct <= 25 ? 'bg-blood-bright' : hpPct <= 50 ? 'bg-candle' : 'bg-parchment/50'}`} style={{ width: `${hpPct}%` }} />
+                  </div>
+                  <div className="text-xs text-parchment/50">{npc.current_hp}/{npc.max_hp} HP</div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {openNpcId && (() => {
+          const npc = npcs.find((n) => n.id === openNpcId)
+          if (!npc) return null
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setOpenNpcId(null)}>
+              <div className="absolute inset-0 bg-ink/80 backdrop-blur-sm" />
+              <div className="panel rounded-sm p-6 max-w-md w-full relative" onClick={(e) => e.stopPropagation()}>
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="font-display text-lg text-candle">{npc.name}</h3>
+                    <p className="text-sm text-parchment/50">AC {npc.armor_class}</p>
+                  </div>
+                  <button onClick={() => setOpenNpcId(null)} className="text-parchment/50 hover:text-candle text-2xl leading-none">×</button>
+                </div>
+                <div className="flex justify-between items-center text-lg mb-2">
+                  <span>HP</span>
+                  <span>{npc.current_hp} / {npc.max_hp}{npc.temp_hp > 0 ? ` (+${npc.temp_hp})` : ''}</span>
+                </div>
+                <div className="flex gap-1.5 mb-4">
+                  <input
+                    type="number"
+                    value={npcHpAdjust}
+                    onChange={(e) => setNpcHpAdjust(e.target.value)}
+                    placeholder="0"
+                    className="w-16 bg-ink border border-mist rounded-sm text-center text-sm py-1.5 text-parchment"
+                  />
+                  <button onClick={() => applyNpcHp(npc, 'damage')} className="flex-1 text-sm border border-blood-bright/50 text-blood-bright rounded-sm hover:bg-blood/20 transition-colors">Damage</button>
+                  <button onClick={() => applyNpcHp(npc, 'heal')} className="flex-1 text-sm border border-candle/50 text-candle rounded-sm hover:bg-candle/10 transition-colors">Heal</button>
+                  <button onClick={() => applyNpcHp(npc, 'temp')} className="flex-1 text-sm border border-mist text-parchment/70 rounded-sm hover:border-candle/50 transition-colors">Temp</button>
+                </div>
+                {npc.notes && (
+                  <div className="mb-4 pt-3 border-t border-mist/40">
+                    <p className="text-sm text-parchment/70 whitespace-pre-wrap leading-relaxed">{npc.notes}</p>
+                  </div>
+                )}
+                <div className="flex justify-between pt-3 border-t border-mist/40">
+                  <button onClick={() => { addNpcToInitiative(npc); setOpenNpcId(null) }} className="text-sm text-candle hover:text-parchment">+ Add to Initiative</button>
+                  <button onClick={() => deleteNpc(npc.id)} className="text-sm text-parchment/40 hover:text-blood-bright">Remove NPC</button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       <div className="panel rounded-sm p-4 mb-4">
