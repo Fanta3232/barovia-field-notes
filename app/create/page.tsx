@@ -6,8 +6,18 @@ import Tooltip from '@/components/Tooltip'
 import {
   Species, SpeciesSubrace, DraconicAncestry, ClassRow, Subclass, Background, Feat, Spell, AbilityScores, ABILITY_KEYS,
   STANDARD_LANGUAGES, ALL_SKILLS, ALIGNMENTS, PB_BUDGET, pbCost, abilityModifier, SUBRACE_SPECIES,
-  FAVORED_ENEMY_TYPES, FAVORED_TERRAIN_TYPES,
+  FAVORED_ENEMY_TYPES, FAVORED_TERRAIN_TYPES, GAMING_SETS, ARTISAN_TOOLS, MUSICAL_INSTRUMENTS,
 } from '@/lib/types'
+
+// Detects which category-choice list (if any) applies to a background's tool_proficiency
+// text, e.g. "One Gaming Set + Vehicles (Land)" -> the Gaming Set options.
+function toolProficiencyOptions(toolProficiency: string | null): string[] | null {
+  if (!toolProficiency) return null
+  if (/gaming set/i.test(toolProficiency)) return GAMING_SETS
+  if (/artisan'?s tools/i.test(toolProficiency)) return ARTISAN_TOOLS
+  if (/musical instrument/i.test(toolProficiency)) return MUSICAL_INSTRUMENTS
+  return null
+}
 
 const STEPS = ['Species', 'Class', 'Class Features', 'Class Skills', 'Background', 'Ability Scores', 'Languages', 'Spells & Cantrips', 'Equipment', 'Review'] as const
 
@@ -57,6 +67,7 @@ export default function CreateCharacterPage() {
   const [variantHumanSkill, setVariantHumanSkill] = useState<string | null>(null)
   const [variantHumanFeatId, setVariantHumanFeatId] = useState<string | null>(null)
   const [resilientAbility, setResilientAbility] = useState<string | null>(null)
+  const [athleteAbility, setAthleteAbility] = useState<string | null>(null)
   const [skilledFeatSkills, setSkilledFeatSkills] = useState<string[]>([])
   const [halfElfBonusAbilities, setHalfElfBonusAbilities] = useState<string[]>([])
   const [draconicAncestry, setDraconicAncestry] = useState<string | null>(null)
@@ -71,6 +82,7 @@ export default function CreateCharacterPage() {
   const [classSkills, setClassSkills] = useState<string[]>([])
 
   const [backgroundId, setBackgroundId] = useState<string | null>(null)
+  const [chosenToolProficiency, setChosenToolProficiency] = useState<string | null>(null)
   const [scores, setScores] = useState<ScoreState>({
     strength: 8, dexterity: 8, constitution: 8, intelligence: 8, wisdom: 8, charisma: 8,
   })
@@ -199,7 +211,8 @@ export default function CreateCharacterPage() {
   }
   function finalScore(ab: keyof ScoreState): number {
     const resilientBonus = resilientAbility === ab ? 1 : 0
-    return scores[ab] + (speciesASI()[ab] ?? 0) + resilientBonus
+    const athleteBonus = athleteAbility === ab ? 1 : 0
+    return scores[ab] + (speciesASI()[ab] ?? 0) + resilientBonus + athleteBonus
   }
   function modifier(score: number) {
     const m = abilityModifier(score)
@@ -264,6 +277,10 @@ export default function CreateCharacterPage() {
       setError(`${selectedClass?.name} needs its ${selectedClass?.name === 'Cleric' ? 'Divine Domain' : selectedClass?.name === 'Sorcerer' ? 'Sorcerous Origin' : 'Otherworldly Patron'} chosen before finishing — go back to Class Features.`)
       return
     }
+    if (toolProficiencyOptions(selectedBackground?.tool_proficiency ?? null) && !chosenToolProficiency) {
+      setError(`${selectedBackground?.name} needs its tool proficiency choice made before finishing — go back to Background.`)
+      return
+    }
     setSaving(true)
     setError(null)
 
@@ -309,6 +326,7 @@ export default function CreateCharacterPage() {
         hit_dice_total: 1,
         hit_dice_remaining: 1,
         species_asi: speciesASI(),
+        chosen_tool_proficiency: chosenToolProficiency,
       })
       .select()
       .single()
@@ -460,9 +478,21 @@ export default function CreateCharacterPage() {
     } else if (classEquipChoice) {
       const opt = selectedClass?.starting_equipment.find((o) => o.label === classEquipChoice)
       for (const line of opt?.items ?? []) {
-        const { fixed } = parseEquipLine(line)
-        const resolvedName = weaponOverrides[line] ?? fixed
-        await insertItemByName(resolvedName, 1, null)
+        const { alwaysItems, weaponOptions, weaponFilter } = parseEquipLine(line)
+        for (const it of alwaysItems) {
+          await insertItemByName(it, 1, null)
+        }
+        if (weaponOptions.length > 0 || weaponFilter) {
+          let resolvedName = weaponOverrides[line]
+          if (!resolvedName) {
+            if (weaponOptions.length > 0) resolvedName = weaponOptions[0]
+            else if (weaponFilter) {
+              const match = weaponCatalog.find((w: any) => w.weapon_category === weaponFilter.category && (weaponFilter.range === 'any' || w.weapon_range === weaponFilter.range))
+              resolvedName = match?.name
+            }
+          }
+          if (resolvedName) await insertItemByName(resolvedName, 1, null)
+        }
       }
     }
     if (selectedBackground) {
@@ -497,6 +527,7 @@ export default function CreateCharacterPage() {
             variantHumanSkill={variantHumanSkill} setVariantHumanSkill={setVariantHumanSkill}
             originFeats={originFeats} variantHumanFeatId={variantHumanFeatId} setVariantHumanFeatId={setVariantHumanFeatId}
             resilientAbility={resilientAbility} setResilientAbility={setResilientAbility}
+            athleteAbility={athleteAbility} setAthleteAbility={setAthleteAbility}
             skilledFeatSkills={skilledFeatSkills} setSkilledFeatSkills={setSkilledFeatSkills}
             isHalfElf={isHalfElf} halfElfBonusAbilities={halfElfBonusAbilities} setHalfElfBonusAbilities={setHalfElfBonusAbilities}
             isHighElf={isHighElf} wizardCantripOptions={wizardCantripOptions} highElfCantrip={highElfCantrip} setHighElfCantrip={setHighElfCantrip}
@@ -518,7 +549,12 @@ export default function CreateCharacterPage() {
           />
         )}
         {step === 3 && <ClassSkillsStep selectedClass={selectedClass} classSkills={classSkills} setClassSkills={setClassSkills} />}
-        {step === 4 && <BackgroundStep backgroundList={backgroundList} backgroundId={backgroundId} setBackgroundId={setBackgroundId} />}
+        {step === 4 && (
+          <BackgroundStep
+            backgroundList={backgroundList} backgroundId={backgroundId} setBackgroundId={setBackgroundId}
+            chosenToolProficiency={chosenToolProficiency} setChosenToolProficiency={setChosenToolProficiency}
+          />
+        )}
         {step === 5 && (
           <AbilityScoreStep
             selectedSpecies={selectedSpecies} selectedSubrace={selectedSubrace}
@@ -555,6 +591,7 @@ export default function CreateCharacterPage() {
             classSkills={classSkills} selectedBackground={selectedBackground}
             selectedLanguages={selectedLanguages} selectedCantrips={selectedCantrips} selectedSpells={selectedSpells}
             classEquipChoice={classEquipChoice} useShop={useShop} shopCart={shopCart} weaponOverrides={weaponOverrides} alignment={alignment} setAlignment={setAlignment}
+            chosenToolProficiency={chosenToolProficiency}
             error={error} saving={saving} onSubmit={handleSubmit}
           />
         )}
@@ -609,7 +646,7 @@ function SpeciesStep(props: any) {
   const {
     name, setName, speciesList, speciesId, setSpeciesId, hasSubraces, subracesForSpecies, subraceId, setSubraceId,
     isHuman, isVariantHuman, setIsVariantHuman, variantHumanAbilities, setVariantHumanAbilities, variantHumanSkill, setVariantHumanSkill,
-    originFeats, variantHumanFeatId, setVariantHumanFeatId, resilientAbility, setResilientAbility, skilledFeatSkills, setSkilledFeatSkills, isHalfElf, halfElfBonusAbilities, setHalfElfBonusAbilities,
+    originFeats, variantHumanFeatId, setVariantHumanFeatId, resilientAbility, setResilientAbility, athleteAbility, setAthleteAbility, skilledFeatSkills, setSkilledFeatSkills, isHalfElf, halfElfBonusAbilities, setHalfElfBonusAbilities,
     isDragonborn, ancestryList, draconicAncestry, setDraconicAncestry,
     isHighElf, wizardCantripOptions, highElfCantrip, setHighElfCantrip, halfElfSkills, setHalfElfSkills,
     hasMagicInitiate, miClassName, setMiClassName, miCantripOptions, miSpellOptions, miCantrips, setMiCantrips, miSpell, setMiSpell,
@@ -724,6 +761,14 @@ function SpeciesStep(props: any) {
                   <h4 className="font-display text-xs text-candle mb-2">Resilient: choose which ability gets +1 and save proficiency</h4>
                   {ABILITY_KEYS.map((a) => (
                     <Chip key={a} selected={resilientAbility === a} onClick={() => setResilientAbility(a)}>{a}</Chip>
+                  ))}
+                </div>
+              )}
+              {originFeats.find((f: Feat) => f.id === variantHumanFeatId)?.name === 'Athlete' && (
+                <div className="mt-4">
+                  <h4 className="font-display text-xs text-candle mb-2">Athlete: choose which ability gets +1</h4>
+                  {['strength', 'dexterity'].map((a) => (
+                    <Chip key={a} selected={athleteAbility === a} onClick={() => setAthleteAbility(a)}>{a}</Chip>
                   ))}
                 </div>
               )}
@@ -858,11 +903,14 @@ function ClassSkillsStep({ selectedClass, classSkills, setClassSkills }: any) {
   )
 }
 
-function BackgroundStep({ backgroundList, backgroundId, setBackgroundId }: any) {
+function BackgroundStep({ backgroundList, backgroundId, setBackgroundId, chosenToolProficiency, setChosenToolProficiency }: any) {
+  const selected = backgroundList.find((b: Background) => b.id === backgroundId)
+  const toolOptions = selected ? toolProficiencyOptions(selected.tool_proficiency) : null
   return (
     <div>
       <h2 className="font-display text-xl text-candle mb-3">Choose your background</h2>
-      <ListDetail items={backgroundList} selectedId={backgroundId} onSelect={setBackgroundId}
+      <ListDetail items={backgroundList} selectedId={backgroundId}
+        onSelect={(id: string) => { setBackgroundId(id); setChosenToolProficiency(null) }}
         renderDetail={(b: Background) => (
           <>
             <DTitle>{b.name}</DTitle>
@@ -873,6 +921,18 @@ function BackgroundStep({ backgroundList, backgroundId, setBackgroundId }: any) 
             <DTrait name="Starting Equipment" desc={b.equipment.map((e) => `${e.qty}× ${e.item}`).join(', ')} />
           </>
         )} />
+      {toolOptions && (
+        <div className="mt-5">
+          <h3 className="font-display text-sm text-candle mb-2">
+            {selected.tool_proficiency.match(/gaming set/i) ? 'Choose your Gaming Set'
+              : selected.tool_proficiency.match(/artisan/i) ? "Choose your Artisan's Tools"
+              : 'Choose your Musical Instrument'}
+          </h3>
+          {toolOptions.map((opt: string) => (
+            <Chip key={opt} selected={chosenToolProficiency === opt} onClick={() => setChosenToolProficiency(opt)}>{opt}</Chip>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -975,15 +1035,42 @@ function SpellsStep({ selectedClass, castsAtLevel1, classCantrips, classSpells, 
   )
 }
 
-function parseEquipLine(line: string): { fixed: string; weaponFilter: { category: string; range: string } | null } {
-  const lower = line.toLowerCase()
-  let weaponFilter = null
-  if (lower.includes('any martial melee weapon')) weaponFilter = { category: 'martial', range: 'melee' }
-  else if (lower.includes('any martial weapon')) weaponFilter = { category: 'martial', range: 'any' }
-  else if (lower.includes('any simple melee weapon')) weaponFilter = { category: 'simple', range: 'melee' }
-  else if (lower.includes('any simple weapon')) weaponFilter = { category: 'simple', range: 'any' }
-  const fixed = line.split(/ or /i)[0].trim()
-  return { fixed, weaponFilter }
+// Parses a starting-equipment line into:
+//  - alwaysItems: items granted no matter what (e.g. armor/daggers alongside a weapon choice)
+//  - weaponOptions: specific named weapons offered as direct alternatives (e.g. "Rapier, Longsword")
+//  - weaponFilter: an "any simple/martial [melee/ranged] weapon" catalog filter, if present
+// A line can have alwaysItems AND a weapon choice at the same time (e.g. Warlock's
+// "Leather Armor, any simple weapon, and two Daggers") — picking the weapon must not
+// discard the other items, which was the root cause of the armor/daggers bug.
+function parseEquipLine(line: string): { alwaysItems: string[]; weaponOptions: string[]; weaponFilter: { category: string; range: string } | null } {
+  const weaponPhraseRe = /any (martial|simple)(?:\s+(melee|ranged))?\s+weapon/i
+  const m = line.match(weaponPhraseRe)
+
+  if (!m) {
+    // No "any X weapon" phrase. Either a plain "A or B" alternative list, or a fixed set
+    // of items joined by commas/"and" that are all granted together.
+    if (/\bor\b/i.test(line)) {
+      return { alwaysItems: [], weaponOptions: line.split(/\bor\b/i).map((s) => s.trim().replace(/,\s*$/, '')).filter(Boolean), weaponFilter: null }
+    }
+    return { alwaysItems: line.split(/,| and /i).map((s) => s.trim()).filter(Boolean), weaponOptions: [], weaponFilter: null }
+  }
+
+  const weaponFilter = { category: m[1].toLowerCase(), range: (m[2] ?? 'any').toLowerCase() }
+  const before = line.slice(0, m.index)
+  const after = line.slice((m.index ?? 0) + m[0].length)
+
+  // If the text right before the weapon phrase ends in "or", everything before it is a
+  // list of named alternatives to the weapon-category choice (Bard: "Rapier, Longsword, or").
+  // Otherwise it's fixed text that's simply granted alongside the weapon choice.
+  const orMatch = before.match(/^(.*?),?\s*\bor\s*$/i)
+  const weaponOptions = orMatch ? orMatch[1].split(',').map((s) => s.trim()).filter(Boolean) : []
+  const beforeAlways = orMatch ? '' : before.replace(/,?\s*(and)?\s*$/i, '').trim()
+  const afterAlways = after.replace(/^\s*,?\s*(and)?\s*/i, '').trim()
+
+  const alwaysRaw = [beforeAlways, afterAlways].filter(Boolean).join(', ')
+  const alwaysItems = alwaysRaw ? alwaysRaw.split(/,| and /i).map((s) => s.trim()).filter(Boolean) : []
+
+  return { alwaysItems, weaponOptions, weaponFilter }
 }
 
 function EquipmentStep({
@@ -1017,24 +1104,38 @@ function EquipmentStep({
               {classEquipChoice === opt.label && opt.items && (
                 <div className="mt-3 pt-3 border-t border-mist/50 space-y-3">
                   {opt.items.map((line: string) => {
-                    const { fixed, weaponFilter } = parseEquipLine(line)
-                    if (!weaponFilter) {
-                      const packMatch = packContentsMap[fixed]
+                    const { alwaysItems, weaponOptions, weaponFilter } = parseEquipLine(line)
+                    const hasChoice = weaponOptions.length > 0 || !!weaponFilter
+                    if (!hasChoice) {
                       return (
                         <div key={line}>
-                          <span className="text-xs text-parchment/60">{fixed}</span>
-                          {packMatch && <p className="text-xs text-parchment/40 italic ml-2">Contains: {packMatch.join(', ')}</p>}
+                          {alwaysItems.map((it) => {
+                            const packMatch = packContentsMap[it]
+                            return (
+                              <div key={it}>
+                                <span className="text-xs text-parchment/60">{it}</span>
+                                {packMatch && <p className="text-xs text-parchment/40 italic ml-2">Contains: {packMatch.join(', ')}</p>}
+                              </div>
+                            )
+                          })}
                         </div>
                       )
                     }
-                    const options = weaponCatalog.filter((w: any) =>
-                      w.weapon_category === weaponFilter.category && (weaponFilter.range === 'any' || w.weapon_range === weaponFilter.range))
-                    const chosen = weaponOverrides[line] ?? fixed
+                    const filterOptions = weaponFilter
+                      ? weaponCatalog.filter((w: any) => w.weapon_category === weaponFilter.category && (weaponFilter.range === 'any' || w.weapon_range === weaponFilter.range))
+                      : []
+                    const defaultChoice = weaponOptions[0] ?? filterOptions[0]?.name ?? ''
+                    const chosen = weaponOverrides[line] ?? defaultChoice
                     return (
-                      <div key={line}>
+                      <div key={line} className="mb-1">
+                        {alwaysItems.length > 0 && (
+                          <p className="text-xs text-parchment/50 italic mb-1">Also includes: {alwaysItems.join(', ')}</p>
+                        )}
                         <p className="text-xs text-parchment/60 mb-1.5">{line}</p>
-                        <Chip selected={chosen === fixed} onClick={() => setWeaponOverrides((prev: any) => ({ ...prev, [line]: fixed }))}>{fixed} (default)</Chip>
-                        {options.map((w: any) => (
+                        {weaponOptions.map((w) => (
+                          <Chip key={w} selected={chosen === w} onClick={() => setWeaponOverrides((prev: any) => ({ ...prev, [line]: w }))}>{w}</Chip>
+                        ))}
+                        {filterOptions.map((w: any) => (
                           <Chip key={w.id} selected={chosen === w.name} onClick={() => setWeaponOverrides((prev: any) => ({ ...prev, [line]: w.name }))}>{w.name}</Chip>
                         ))}
                       </div>
@@ -1089,6 +1190,7 @@ function ReviewStep(props: any) {
     draconicAncestry, highElfCantrip, halfElfSkills, skilledFeatSkills, rangerFavoredEnemy, rangerFavoredTerrain,
     selectedClass, selectedSubclass, fightingStyle, classSkills, selectedBackground,
     selectedLanguages, selectedCantrips, selectedSpells, classEquipChoice, useShop, shopCart, weaponOverrides, alignment, setAlignment,
+    chosenToolProficiency,
     error, saving, onSubmit,
   } = props
   return (
@@ -1110,6 +1212,7 @@ function ReviewStep(props: any) {
         {rangerFavoredTerrain && <p><span className="text-parchment/50">Favored Terrain:</span> {rangerFavoredTerrain}</p>}
         {classSkills.length > 0 && <p><span className="text-parchment/50">Class Skills:</span> {classSkills.join(', ')}</p>}
         <p><span className="text-parchment/50">Background:</span> {selectedBackground?.name ?? '—'}</p>
+        {chosenToolProficiency && <p><span className="text-parchment/50">Tool Proficiency:</span> {chosenToolProficiency}</p>}
         <p><span className="text-parchment/50">Languages:</span> Common{selectedLanguages.length ? `, ${selectedLanguages.join(', ')}` : ''}</p>
         {selectedCantrips.length > 0 && <p><span className="text-parchment/50">Cantrips:</span> {selectedCantrips.join(', ')}</p>}
         {selectedSpells.length > 0 && <p><span className="text-parchment/50">Spells:</span> {selectedSpells.join(', ')}</p>}

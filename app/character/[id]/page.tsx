@@ -29,6 +29,7 @@ type FullCharacter = {
   favored_enemy: string | null
   favored_terrain: string | null
   resilient_ability: string | null
+  chosen_tool_proficiency: string | null
   species: { name: string; traits: { name: string; description: string }[] } | null
   species_subrace: { name: string; traits: { name: string; description: string }[] } | null
   background: { name: string; feature_name: string | null; feature_description: string | null } | null
@@ -277,6 +278,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             {character.background?.feature_name ? (
               <Tooltip label={<span className="block text-sm">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} />
             ) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
+            {character.chosen_tool_proficiency && (
+              <p className="text-xs text-parchment/60 mt-2"><span className="text-candle">Tool Proficiency:</span> {character.chosen_tool_proficiency}</p>
+            )}
           </div>
 
           <div className="panel rounded-sm p-4">

@@ -146,3 +146,17 @@ export const FAVORED_ENEMY_TYPES = [
 export const FAVORED_TERRAIN_TYPES = [
   'Arctic', 'Coast', 'Desert', 'Forest', 'Grassland', 'Mountain', 'Swamp', 'Underdark',
 ]
+
+// Some backgrounds grant a category ("One Gaming Set", "One Artisan's Tools", "One Musical
+// Instrument") rather than a fixed named tool. These are the real option lists from the 2014
+// PHB, used to resolve that choice on the Background step instead of leaving it undecided.
+export const GAMING_SETS = ['Dice Set', 'Dragonchess Set', 'Playing Card Set']
+export const ARTISAN_TOOLS = [
+  "Alchemist's Supplies", "Brewer's Supplies", "Calligrapher's Supplies", "Carpenter's Tools",
+  "Cartographer's Tools", "Cobbler's Tools", "Cook's Utensils", "Glassblower's Tools",
+  "Jeweler's Tools", "Leatherworker's Tools", "Mason's Tools", "Painter's Supplies",
+  "Potter's Tools", "Smith's Tools", "Tinker's Tools", "Weaver's Tools", "Woodcarver's Tools",
+]
+export const MUSICAL_INSTRUMENTS = [
+  'Bagpipes', 'Drum', 'Dulcimer', 'Flute', 'Lute', 'Lyre', 'Horn', 'Pan Flute', 'Shawm', 'Viol',
+]
