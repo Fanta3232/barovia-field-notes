@@ -625,8 +625,8 @@ function ListDetail<T extends { id: string; name: string }>({ items, selectedId,
 }) {
   const active = items.find((i) => i.id === selectedId) ?? items[0]
   return (
-    <div className="grid grid-cols-[220px_1fr] gap-0 min-h-[280px]">
-      <div className="border-r border-mist pr-1 max-h-[400px] overflow-y-auto">
+    <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-0 min-h-[280px]">
+      <div className="border-b md:border-b-0 md:border-r border-mist pb-1 md:pb-0 md:pr-1 max-h-[180px] md:max-h-[400px] overflow-y-auto">
         {items.map((i) => (
           <div key={i.id} onClick={() => onSelect(i.id)}
             className={`px-3.5 py-2.5 font-display text-sm cursor-pointer border-l-2 transition-colors ${i.id === selectedId ? 'border-candle bg-blood/20 text-candle' : 'border-transparent text-parchment/75 hover:bg-candle/5 hover:text-parchment'}`}>
@@ -634,7 +634,7 @@ function ListDetail<T extends { id: string; name: string }>({ items, selectedId,
           </div>
         ))}
       </div>
-      <div className="px-5">{active ? renderDetail(active) : <p className="text-parchment/40 text-xs italic">Select an option to see details.</p>}</div>
+      <div className="px-0 pt-4 md:pt-0 md:px-5">{active ? renderDetail(active) : <p className="text-parchment/40 text-xs italic">Select an option to see details.</p>}</div>
     </div>
   )
 }
