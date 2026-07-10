@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Tooltip from '@/components/Tooltip'
 import Modal from '@/components/Modal'
@@ -108,6 +108,22 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const [statusModalOpen, setStatusModalOpen] = useState(false)
   const [roleplayModalOpen, setRoleplayModalOpen] = useState(false)
   const [hpAdjust, setHpAdjust] = useState('')
+
+  // Rolling engine state. rollMode is a "stance" you set once (e.g. after a spell grants
+  // Advantage) rather than a per-click choice — far fewer clicks across a real session than
+  // asking every single time. autoRoll defaults on but is a personal per-browser preference
+  // (localStorage), for tables that would rather roll physical dice and just want the math.
+  const [rollMode, setRollMode] = useState<'normal' | 'advantage' | 'disadvantage'>('normal')
+  const [autoRoll, setAutoRoll] = useState(true)
+  const [rollToast, setRollToast] = useState<string | null>(null)
+  const [rollLog, setRollLog] = useState<{ text: string; time: string }[]>([])
+  const [lastCrit, setLastCrit] = useState<Record<string, boolean>>({})
+  const rollToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem('barovia_auto_roll')
+    if (stored !== null) setAutoRoll(stored === 'true')
+  }, [])
   const [roleplayDraft, setRoleplayDraft] = useState({
     personality_traits: '', ideals: '', bonds: '', flaws: '', backstory: '', appearance: '',
   })
@@ -336,6 +352,105 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     supabase.from('character_activity_log').insert({ character_id: params.id, source: 'sheet', action, detail })
   }
 
+  function rollD20(mode: 'normal' | 'advantage' | 'disadvantage'): { natural: number; rolls: number[] } {
+    const r1 = 1 + Math.floor(Math.random() * 20)
+    if (mode === 'normal') return { natural: r1, rolls: [r1] }
+    const r2 = 1 + Math.floor(Math.random() * 20)
+    const chosen = mode === 'advantage' ? Math.max(r1, r2) : Math.min(r1, r2)
+    return { natural: chosen, rolls: [r1, r2] }
+  }
+
+  function rollDiceExpr(expr: string): { total: number; rolls: number[] } {
+    const m = expr.match(/(\d+)d(\d+)/)
+    if (!m) return { total: 0, rolls: [] }
+    const count = parseInt(m[1], 10)
+    const sides = parseInt(m[2], 10)
+    const rolls = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides))
+    return { total: rolls.reduce((a, b) => a + b, 0), rolls }
+  }
+
+  function announceRoll(text: string) {
+    setRollToast(text)
+    setRollLog((prev) => [{ text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...prev].slice(0, 15))
+    if (rollToastTimer.current) clearTimeout(rollToastTimer.current)
+    rollToastTimer.current = setTimeout(() => setRollToast(null), 6000)
+  }
+
+  function modeSuffix() {
+    return rollMode !== 'normal' ? ` (${rollMode === 'advantage' ? 'Advantage' : 'Disadvantage'})` : ''
+  }
+
+  // Ability checks, skill checks, and saving throws all share this shape: a d20 plus a flat
+  // modifier, respecting whatever advantage/disadvantage stance is currently set.
+  function rollCheck(label: string, modifier: number) {
+    if (!autoRoll) {
+      announceRoll(`${label}: roll a d20${modeSuffix()}, add ${modifier >= 0 ? '+' : ''}${modifier}`)
+      return
+    }
+    const { natural, rolls } = rollD20(rollMode)
+    const total = natural + modifier
+    const rollNote = rollMode !== 'normal' ? ` [rolled ${rolls.join(' / ')}, took ${natural}]` : ''
+    const critNote = natural === 20 ? ' — Natural 20!' : natural === 1 ? ' — Natural 1.' : ''
+    announceRoll(`${label}: ${total}${rollNote}${critNote}`)
+  }
+
+  function rollAttack(key: string, label: string, modifier: number) {
+    if (!autoRoll) {
+      announceRoll(`${label} (attack): roll a d20${modeSuffix()}, add ${modifier >= 0 ? '+' : ''}${modifier}`)
+      return
+    }
+    const { natural, rolls } = rollD20(rollMode)
+    const isCrit = natural === 20
+    const isFumble = natural === 1
+    setLastCrit((prev) => ({ ...prev, [key]: isCrit }))
+    const total = natural + modifier
+    const rollNote = rollMode !== 'normal' ? ` [rolled ${rolls.join(' / ')}, took ${natural}]` : ''
+    announceRoll(`${label} attack: ${total}${rollNote}${isCrit ? ' — CRITICAL HIT!' : isFumble ? ' — critical fumble.' : ''}`)
+  }
+
+  function rollDamage(key: string, label: string, diceExpr: string, modifier: number, damageType: string) {
+    const crit = lastCrit[key]
+    if (!autoRoll) {
+      announceRoll(`${label} damage: roll ${crit ? `${diceExpr} twice (crit)` : diceExpr}, add ${modifier >= 0 ? '+' : ''}${modifier} ${damageType}`)
+      return
+    }
+    const first = rollDiceExpr(diceExpr)
+    const second = crit ? rollDiceExpr(diceExpr) : { total: 0, rolls: [] as number[] }
+    const total = first.total + second.total + modifier
+    const rollsShown = [...first.rolls, ...second.rolls].join(' + ')
+    announceRoll(`${label} damage: ${total} ${damageType}${crit ? ' (crit!)' : ''} [${rollsShown}${modifier !== 0 ? ` ${modifier >= 0 ? '+' : ''}${modifier}` : ''}]`)
+    setLastCrit((prev) => ({ ...prev, [key]: false }))
+  }
+
+  async function rollDeathSave() {
+    if (!autoRoll) {
+      announceRoll('Death Save: roll a d20 — 10+ succeeds, a natural 20 brings you to 1 HP, a natural 1 counts as two failures.')
+      return
+    }
+    const natural = 1 + Math.floor(Math.random() * 20)
+    if (natural === 20) {
+      const updates = { current_hp: 1, death_save_successes: 0, death_save_failures: 0 }
+      setCharacter((prev) => prev ? { ...prev, ...updates } : prev)
+      await supabase.from('characters').update(updates).eq('id', params.id)
+      logActivity('death_save', 'Natural 20 — regained 1 HP')
+      announceRoll('Death Save: Natural 20! You regain 1 HP and wake up.')
+      return
+    }
+    if (natural === 1) {
+      const next = Math.min(3, character!.death_save_failures + 2)
+      setCharacter((prev) => prev ? { ...prev, death_save_failures: next } : prev)
+      await supabase.from('characters').update({ death_save_failures: next }).eq('id', params.id)
+      announceRoll(`Death Save: Natural 1 — counts as two failures (${next}/3).`)
+      return
+    }
+    const success = natural >= 10
+    const field = success ? 'death_save_successes' : 'death_save_failures'
+    const next = Math.min(3, character![field] + 1)
+    setCharacter((prev) => prev ? { ...prev, [field]: next } : prev)
+    await supabase.from('characters').update({ [field]: next }).eq('id', params.id)
+    announceRoll(`Death Save: ${natural} — ${success ? 'Success' : 'Failure'} (${next}/3).`)
+  }
+
   async function applyDamage() {
     const amount = Math.max(0, parseInt(hpAdjust) || 0)
     if (amount === 0) return
@@ -506,7 +621,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   return (
     <>
     <main className="min-h-screen px-6 py-8 max-w-6xl mx-auto">
-      <div className="flex items-baseline justify-between mb-6 border-b border-mist pb-4">
+      <div className="flex items-baseline justify-between mb-3">
         <div>
           <h1 className="font-display text-4xl text-candle">{character.name}</h1>
           <p className="text-base text-parchment/60">
@@ -525,6 +640,37 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </>
           )}
         </div>
+      </div>
+
+      <div className="flex items-center justify-between mb-6 pb-4 border-b border-mist gap-4 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm text-parchment/40 uppercase tracking-wide mr-1">Roll Stance:</span>
+          {(['disadvantage', 'normal', 'advantage'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setRollMode(m)}
+              className={`text-sm px-2.5 py-1 rounded-sm border transition-colors capitalize ${rollMode === m ? 'border-candle bg-blood/25 text-candle' : 'border-mist text-parchment/60 hover:border-candle/50'}`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <Tooltip
+          label={
+            <button
+              onClick={() => {
+                const next = !autoRoll
+                setAutoRoll(next)
+                window.localStorage.setItem('barovia_auto_roll', String(next))
+              }}
+              className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors"
+            >
+              {autoRoll ? 'Auto-Roll: ON' : 'Prompt Mode'}
+            </button>
+          }
+          title="Auto-Roll vs. Prompt Mode"
+          body="Auto-Roll: clicking a stat rolls the dice for you instantly. Prompt Mode: clicking just tells you what to roll and add, for tables that prefer physical dice. This is a per-browser setting, not shared with the rest of the party."
+        />
       </div>
 
       <div className="grid grid-cols-12 gap-4">
@@ -546,15 +692,19 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     <span className="font-display text-base capitalize text-parchment">
                       {label}{speciesBonus ? <span className="text-candle text-sm"> (+{speciesBonus})</span> : ''}
                     </span>
-                    <span className="text-base">{character[ab]} ({modifier(character[ab])})</span>
+                    <button onClick={() => rollCheck(`${label} Check`, abMod)} className="text-base hover:text-candle transition-colors">
+                      {character[ab]} ({modifier(character[ab])})
+                    </button>
                   </div>
                   <div className="flex justify-between text-sm mb-1.5">
                     <Tooltip
                       label={<span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}</span>}
                       title={`${label} Saving Throw`}
-                      body="Rolled to resist an effect trying to happen to you — like being knocked prone, thrown from a cliff, or gripped by a spell. Different abilities cover different kinds of resistance."
+                      body="Rolled to resist an effect trying to happen to you — like being knocked prone, thrown from a cliff, or gripped by a spell. Different abilities cover different kinds of resistance. Click the number to roll it."
                     />
-                    <span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>{saveBonus >= 0 ? `+${saveBonus}` : saveBonus}</span>
+                    <button onClick={() => rollCheck(`${label} Save`, saveBonus)} className={`hover:text-candle transition-colors ${saveProficient ? 'text-candle' : 'text-parchment/60'}`}>
+                      {saveBonus >= 0 ? `+${saveBonus}` : saveBonus}
+                    </button>
                   </div>
                   {relatedSkills.map((skillName) => {
                     const skillRow = skills.find((s) => s.skill_name === skillName)
@@ -565,9 +715,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                         <Tooltip
                           label={<span className={proficient ? 'text-candle' : 'text-parchment/50'}>{skillName}{skillRow?.expertise ? ' *' : ''}</span>}
                           title={skillName}
-                          body={`${SKILL_DESCRIPTIONS[skillName]}${skillRow?.expertise ? ' (Expertise: proficiency bonus is doubled for this skill.)' : ''}`}
+                          body={`${SKILL_DESCRIPTIONS[skillName]}${skillRow?.expertise ? ' (Expertise: proficiency bonus is doubled for this skill.)' : ''} Click the number to roll it.`}
                         />
-                        <span className={proficient ? 'text-candle' : 'text-parchment/50'}>{bonus >= 0 ? `+${bonus}` : bonus}</span>
+                        <button onClick={() => rollCheck(skillName, bonus)} className={`hover:text-candle transition-colors ${proficient ? 'text-candle' : 'text-parchment/50'}`}>
+                          {bonus >= 0 ? `+${bonus}` : bonus}
+                        </button>
                       </div>
                     )
                   })}
@@ -611,8 +763,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               />
             )}
             <Row
-              label={<Tooltip label="Initiative" title="Initiative" body="Added to a d20 roll at the start of combat. Highest total goes first, and that turn order holds for the rest of the fight." />}
-              value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)}
+              label={<Tooltip label="Initiative" title="Initiative" body="Added to a d20 roll at the start of combat. Highest total goes first, and that turn order holds for the rest of the fight. Click to roll it." />}
+              value={
+                <button onClick={() => rollCheck('Initiative', character.initiative_bonus)} className="hover:text-candle transition-colors">
+                  {character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)}
+                </button>
+              }
             />
             <Row
               label={<Tooltip label="Speed" title="Speed" body="How far you can move, in feet, on your turn. Difficult terrain, being Prone, or certain conditions can reduce how far that movement actually gets you." />}
@@ -666,7 +822,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-display text-base text-candle uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
+              <button onClick={rollDeathSave} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2.5 py-0.5">Roll</button>
+            </div>
             <div className="flex justify-between items-center mb-2">
               <Tooltip
                 label={<span className="text-base">Successes</span>}
@@ -733,10 +892,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 <tr className="text-xs text-parchment/40 uppercase tracking-wide text-left">
                   <th className="font-normal pb-1">Name</th>
                   <th className="font-normal pb-1">
-                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better." />
+                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better. Click a value to roll it." />
                   </th>
                   <th className="font-normal pb-1">
-                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in." />
+                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in. Click a value to roll it — if your last attack roll for that weapon was a natural 20, damage automatically doubles." />
                   </th>
                 </tr>
               </thead>
@@ -744,21 +903,39 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
                   <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
                   <td className="py-1 pr-2 text-parchment/70">
-                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                    <button
+                      onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
+                      className="hover:text-candle transition-colors"
+                    >
+                      {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                    </button>
                   </td>
                   <td className="py-1 text-parchment/50">
-                    1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
+                    <button
+                      onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
+                      className="hover:text-candle transition-colors"
+                    >
+                      1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
+                    </button>
                   </td>
                 </tr>
                 {equippedWeapons.map((row) => {
                   const bonus = weaponAttackBonus(row)
                   const dmg = weaponDamage(row)
+                  const name = row.items?.name ?? 'Weapon'
                   return (
                     <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                      <td className="py-1 pr-2">{row.items?.name}</td>
-                      <td className="py-1 pr-2">{bonus >= 0 ? `+${bonus}` : bonus}</td>
+                      <td className="py-1 pr-2">{name}</td>
+                      <td className="py-1 pr-2">
+                        <button onClick={() => rollAttack(row.id, name, bonus)} className="hover:text-candle transition-colors">
+                          {bonus >= 0 ? `+${bonus}` : bonus}
+                        </button>
+                      </td>
                       <td className="py-1 text-parchment/70">
-                        {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                        <button onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="hover:text-candle transition-colors">
+                          {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                          {lastCrit[row.id] && <span className="text-blood-bright"> (crit ready)</span>}
+                        </button>
                       </td>
                     </tr>
                   )
@@ -768,12 +945,32 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             {spellcastingAbility && (
               <div className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
                 <Tooltip
-                  label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
+                  label={
+                    <button onClick={() => rollCheck(`${character.class?.name} Spell Attack`, PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2))} className="hover:text-candle transition-colors">
+                      Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                    </button>
+                  }
                   title="Spell Attack Bonus"
-                  body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead."
+                  body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead. Click to roll it."
                 />
                 {' · '}
                 <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
+              </div>
+            )}
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
+            {rollLog.length === 0 ? (
+              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {rollLog.map((entry, i) => (
+                  <div key={i} className="text-sm flex gap-2">
+                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
+                    <span className="text-parchment/70">{entry.text}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1027,6 +1224,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
       </div>
     </main>
 
+    {rollToast && (
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 panel rounded-sm px-5 py-3 shadow-seal max-w-md text-center">
+        <p className="text-base text-candle">{rollToast}</p>
+        <button onClick={() => setRollToast(null)} className="text-sm text-parchment/40 hover:text-parchment mt-1">Dismiss</button>
+      </div>
+    )}
+
     <Modal open={statusModalOpen} onClose={() => setStatusModalOpen(false)} title="Status Effects">
       <p className="text-sm text-parchment/50 mb-4">Toggle any conditions currently affecting {character.name}. They'll show as pills on the sheet with their full rules text on hover.</p>
       <div className="grid grid-cols-2 gap-2">
@@ -1079,7 +1283,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   )
 }
 
-function Row({ label, value, dim }: { label: React.ReactNode; value: string; dim?: boolean }) {
+function Row({ label, value, dim }: { label: React.ReactNode; value: React.ReactNode; dim?: boolean }) {
   return (
     <div className="flex justify-between text-base mb-1">
       <span>{label}</span>
