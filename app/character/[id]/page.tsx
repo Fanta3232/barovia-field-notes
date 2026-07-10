@@ -33,7 +33,7 @@ type FullCharacter = {
   species: { name: string; traits: { name: string; description: string }[] } | null
   species_subrace: { name: string; traits: { name: string; description: string }[] } | null
   background: { name: string; feature_name: string | null; feature_description: string | null } | null
-  class: { name: string; hit_die: number; spellcasting_type: string | null; saving_throw_proficiencies: string[] } | null
+  class: { name: string; hit_die: number; spellcasting_type: string | null; spellcasting_ability: string | null; saving_throw_proficiencies: string[] } | null
   subclass: { name: string; features: { name: string; description: string; level: number }[] } | null
 }
 
@@ -47,7 +47,7 @@ type InventoryRow = {
   item_name: string | null
   parent_inventory_id: string | null
   equipped: boolean
-  items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null } | null
+  items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null; category: string; properties: Record<string, any> } | null
 }
 type CurrencyRow = { gp: number; sp: number; cp: number; pp: number; ep: number }
 type ClassFeatureRow = { name: string; description: string; level: number }
@@ -91,13 +91,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     async function load() {
       const [charRes, skillsRes, langRes, featsRes, spellsRes, invRes, currRes, slotsRes, resourcesRes, effectsRes] = await Promise.all([
         supabase.from('characters')
-          .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, saving_throw_proficiencies), subclass:subclass_id(name, features)')
+          .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, spellcasting_ability, saving_throw_proficiencies), subclass:subclass_id(name, features)')
           .eq('id', params.id).single(),
         supabase.from('character_skills').select('skill_name').eq('character_id', params.id),
         supabase.from('character_languages').select('language').eq('character_id', params.id),
         supabase.from('character_feats').select('source, feats:feat_id(name, description, category)').eq('character_id', params.id),
         supabase.from('character_spells').select('is_prepared, is_always_known, spells:spell_id(name, level, school, description)').eq('character_id', params.id),
-        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity)').eq('character_id', params.id),
+        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity, category, properties)').eq('character_id', params.id),
         supabase.from('character_currency').select('gp, sp, cp, pp, ep').eq('character_id', params.id).single(),
         supabase.from('character_spell_slots').select('slot_level, max_slots, used_slots').eq('character_id', params.id),
         supabase.from('character_resources').select('name, max_value, current_value, recharge').eq('character_id', params.id),
@@ -168,9 +168,42 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     await supabase.from('character_inventory').update({ parent_inventory_id: newParentId }).eq('id', rowId)
   }
 
+  // Equipping is restricted to armor and weapons only — this is the actual stop on "equip
+  // everything to dodge carry weight," since gear/tools/containers never get an Equip button
+  // in the first place (enforced below in the render too). Equipping a new body armor or
+  // shield swaps out whichever one you already had on, since you're still just one person;
+  // weapons are capped at 2 equipped at once (two hands), blocked rather than auto-swapped
+  // since there's no obvious "which one" to replace.
   async function toggleEquipped(rowId: string, currentlyEquipped: boolean) {
-    setInventory((prev) => prev.map((r) => r.id === rowId ? { ...r, equipped: !currentlyEquipped } : r))
-    await supabase.from('character_inventory').update({ equipped: !currentlyEquipped }).eq('id', rowId)
+    const row = inventory.find((r) => r.id === rowId)
+    const category = row?.items?.category
+    const willEquip = !currentlyEquipped
+    if (willEquip && category !== 'weapon' && category !== 'armor') return
+
+    const updates: { id: string; equipped: boolean }[] = [{ id: rowId, equipped: willEquip }]
+
+    if (willEquip && category === 'armor') {
+      const isShield = row?.items?.properties?.ac_bonus != null
+      const conflicting = inventory.find((r) =>
+        r.id !== rowId && r.equipped && r.items?.category === 'armor' &&
+        (isShield ? r.items?.properties?.ac_bonus != null : r.items?.properties?.ac_base != null)
+      )
+      if (conflicting) updates.push({ id: conflicting.id, equipped: false })
+    }
+
+    if (willEquip && category === 'weapon') {
+      const equippedWeapons = inventory.filter((r) => r.equipped && r.items?.category === 'weapon' && r.id !== rowId)
+      if (equippedWeapons.length >= 2) {
+        alert('Only 2 weapons can be equipped at once — unequip one first.')
+        return
+      }
+    }
+
+    setInventory((prev) => prev.map((r) => {
+      const u = updates.find((x) => x.id === r.id)
+      return u ? { ...r, equipped: u.equipped } : r
+    }))
+    await Promise.all(updates.map((u) => supabase.from('character_inventory').update({ equipped: u.equipped }).eq('id', u.id)))
   }
 
   // Spell slot tracking: cast (use a slot) / recover (get one back, e.g. from a feature or
@@ -251,6 +284,34 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   ]
   const subclassL1Features = character.subclass?.features?.filter((f) => f.level === 1) ?? []
 
+  // AC used to be a single number baked in at character creation and never touched again —
+  // equipping/unequipping armor on the sheet had no effect on it at all. Now it's recomputed
+  // live from whatever's actually equipped right now, mirroring the same rules the creation
+  // wizard used (unarmored class formulas, dex caps per armor type, shield bonus).
+  function computeCurrentAC(): number {
+    const dexMod = Math.floor((character!.dexterity - 10) / 2)
+    const equippedArmor = inventory.find((r) => r.equipped && r.items?.category === 'armor' && r.items?.properties?.ac_base != null)
+    const equippedShield = inventory.find((r) => r.equipped && r.items?.category === 'armor' && r.items?.properties?.ac_bonus != null)
+    const shieldBonus = equippedShield ? (equippedShield.items?.properties?.ac_bonus ?? 0) : 0
+
+    if (!equippedArmor) {
+      if (character!.class?.name === 'Barbarian') return 10 + dexMod + Math.floor((character!.constitution - 10) / 2) + shieldBonus
+      if (character!.class?.name === 'Monk') return 10 + dexMod + Math.floor((character!.wisdom - 10) / 2) + shieldBonus
+      if (character!.subclass?.name === 'Draconic Bloodline') return 13 + dexMod + shieldBonus
+      return 10 + dexMod + shieldBonus
+    }
+    const base = equippedArmor.items?.properties?.ac_base ?? 10
+    const dexCap = equippedArmor.items?.properties?.dex_bonus_max
+    const dexApplied = dexCap === null || dexCap === undefined ? dexMod : Math.min(dexMod, dexCap)
+    return base + dexApplied + shieldBonus
+  }
+  const currentAC = computeCurrentAC()
+
+  // Spell Save DC — proficiency bonus is +2 at level 1 (see the Saving Throws panel note on
+  // why this is hardcoded for now). Only shown for actual casters.
+  const spellcastingAbility = character.class?.spellcasting_ability?.toLowerCase() as (typeof ABILITIES)[number] | undefined
+  const spellSaveDC = spellcastingAbility ? 8 + 2 + Math.floor((character[spellcastingAbility] - 10) / 2) : null
+
   return (
     <main className="min-h-screen px-6 py-8 max-w-6xl mx-auto">
       <div className="flex items-baseline justify-between mb-6 border-b border-mist pb-4">
@@ -275,7 +336,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
-            <Row label="Armor Class" value={String(character.armor_class)} />
+            <Row label="Armor Class" value={String(currentAC)} />
+            {spellSaveDC != null && <Row label="Spell Save DC" value={String(spellSaveDC)} />}
             <Row label="Initiative" value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)} />
             <Row label="Speed" value={`${character.speed} ft`} />
             <Row
@@ -504,7 +566,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {!isContainer && (
+                      {!isContainer && (row.items?.category === 'weapon' || row.items?.category === 'armor') && (
                         <button onClick={() => toggleEquipped(row.id, row.equipped)} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">
                           {row.equipped ? 'Unequip' : 'Equip'}
                         </button>

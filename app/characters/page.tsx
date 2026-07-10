@@ -33,6 +33,12 @@ export default function CharactersPage() {
     load()
   }, [])
 
+  async function deleteCharacter(id: string, name: string) {
+    if (!confirm(`Delete ${name}? This can't be undone — their inventory, spells, and progress go with them.`)) return
+    await supabase.from('characters').delete().eq('id', id)
+    setCharacters((prev) => prev.filter((c) => c.id !== id))
+  }
+
   return (
     <main className="min-h-screen px-6 py-10 max-w-4xl mx-auto">
       <div className="flex items-baseline justify-between mb-8">
@@ -54,25 +60,28 @@ export default function CharactersPage() {
       ) : (
         <div className="grid grid-cols-2 gap-4">
           {characters.map((c) => (
-            <Link
-              key={c.id}
-              href={`/character/${c.id}`}
-              className="panel rounded-sm p-4 hover:border-candle/50 transition-colors block"
-            >
-              <div className="flex justify-between items-baseline mb-1">
-                <span className="font-display text-lg text-candle">{c.name}</span>
-                <span className="text-xs text-parchment/50">Lv {c.level}</span>
+            <div key={c.id} className="panel rounded-sm p-4 hover:border-candle/50 transition-colors">
+              <Link href={`/character/${c.id}`} className="block">
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="font-display text-lg text-candle">{c.name}</span>
+                  <span className="text-xs text-parchment/50">Lv {c.level}</span>
+                </div>
+                <p className="text-sm text-parchment/70 mb-2">
+                  {c.species?.name} {c.class?.name} · {c.background?.name}
+                </p>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-parchment/40">HP {c.current_hp} / {c.max_hp}</span>
+                  <span className="text-xs text-parchment/30">
+                    {new Date(c.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+              </Link>
+              <div className="flex justify-end mt-2 pt-2 border-t border-mist/30">
+                <button onClick={() => deleteCharacter(c.id, c.name)} className="text-xs text-parchment/40 hover:text-blood-bright transition-colors">
+                  Delete
+                </button>
               </div>
-              <p className="text-sm text-parchment/70 mb-2">
-                {c.species?.name} {c.class?.name} · {c.background?.name}
-              </p>
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-parchment/40">HP {c.current_hp} / {c.max_hp}</span>
-                <span className="text-xs text-parchment/30">
-                  {new Date(c.created_at).toLocaleDateString()}
-                </span>
-              </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}
