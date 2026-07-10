@@ -107,6 +107,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const [charConditions, setCharConditions] = useState<CharConditionRow[]>([])
   const [statusModalOpen, setStatusModalOpen] = useState(false)
   const [roleplayModalOpen, setRoleplayModalOpen] = useState(false)
+  const [hpAdjust, setHpAdjust] = useState('')
   const [roleplayDraft, setRoleplayDraft] = useState({
     personality_traits: '', ideals: '', bonds: '', flaws: '', backstory: '', appearance: '',
   })
@@ -329,6 +330,71 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     setRoleplayModalOpen(false)
   }
 
+  // Fire-and-forget log entry — groundwork for a future DM panel that can show its own changes
+  // separately from what happened on a player's own sheet. Doesn't block the UI on writing it.
+  function logActivity(action: string, detail: string) {
+    supabase.from('character_activity_log').insert({ character_id: params.id, source: 'sheet', action, detail })
+  }
+
+  async function applyDamage() {
+    const amount = Math.max(0, parseInt(hpAdjust) || 0)
+    if (amount === 0) return
+    let remaining = amount
+    let newTemp = character!.temp_hp
+    let absorbed = 0
+    if (newTemp > 0) {
+      absorbed = Math.min(newTemp, remaining)
+      newTemp -= absorbed
+      remaining -= absorbed
+    }
+    const wasAtZero = character!.current_hp <= 0
+    const newCurrent = Math.max(0, character!.current_hp - remaining)
+    const overkill = character!.current_hp - remaining
+    const massiveDamage = overkill < 0 && Math.abs(overkill) >= character!.max_hp
+
+    const updates: Record<string, any> = { current_hp: newCurrent, temp_hp: newTemp }
+    // Already down and taking more damage counts as an automatic death-save failure — a real
+    // 2014 rule, not just a UI nicety.
+    if (wasAtZero && remaining > 0) {
+      updates.death_save_failures = Math.min(3, character!.death_save_failures + 1)
+    }
+    setCharacter((prev) => prev ? { ...prev, ...updates } : prev)
+    await supabase.from('characters').update(updates).eq('id', params.id)
+    logActivity('damage', `-${amount} HP${absorbed > 0 ? ` (${absorbed} absorbed by temp HP)` : ''}`)
+    setHpAdjust('')
+    if (massiveDamage) {
+      alert("That's enough excess damage to trigger the Instant Death rule (damage remaining after 0 HP meets or exceeds your max HP) — worth a table discussion before continuing.")
+    }
+  }
+
+  async function applyHealing() {
+    const amount = Math.max(0, parseInt(hpAdjust) || 0)
+    if (amount === 0) return
+    const wasAtZero = character!.current_hp <= 0
+    const newCurrent = Math.min(character!.max_hp, character!.current_hp + amount)
+    const updates: Record<string, any> = { current_hp: newCurrent }
+    // Regaining any HP while at 0 clears death saves and wakes you up — also a real rule,
+    // not just a convenience reset.
+    if (wasAtZero && newCurrent > 0) {
+      updates.death_save_successes = 0
+      updates.death_save_failures = 0
+    }
+    setCharacter((prev) => prev ? { ...prev, ...updates } : prev)
+    await supabase.from('characters').update(updates).eq('id', params.id)
+    logActivity('heal', `+${amount} HP`)
+    setHpAdjust('')
+  }
+
+  async function setTempHp() {
+    const amount = Math.max(0, parseInt(hpAdjust) || 0)
+    // Temporary HP doesn't stack — you take the higher value, not the sum.
+    const newTemp = Math.max(character!.temp_hp, amount)
+    setCharacter((prev) => prev ? { ...prev, temp_hp: newTemp } : prev)
+    await supabase.from('characters').update({ temp_hp: newTemp }).eq('id', params.id)
+    logActivity('temp_hp', `Temp HP set to ${newTemp}`)
+    setHpAdjust('')
+  }
+
   async function updateCurrency(field: keyof CurrencyRow, value: number) {
     const clamped = Math.max(0, Math.floor(value) || 0)
     setCurrency((prev) => prev ? { ...prev, [field]: clamped } : prev)
@@ -442,20 +508,20 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     <main className="min-h-screen px-6 py-8 max-w-6xl mx-auto">
       <div className="flex items-baseline justify-between mb-6 border-b border-mist pb-4">
         <div>
-          <h1 className="font-display text-3xl text-candle">{character.name}</h1>
-          <p className="text-sm text-parchment/60">
+          <h1 className="font-display text-4xl text-candle">{character.name}</h1>
+          <p className="text-base text-parchment/60">
             Level {character.level} {character.species?.name}{character.species_subrace ? ` (${character.species_subrace.name})` : ''} {character.class?.name}{character.subclass ? ` (${character.subclass.name})` : ''} · {character.background?.name}
             {character.alignment && ` · ${character.alignment}`}
           </p>
         </div>
-        {character.inspiration && <span className="wax-seal text-xs px-3 py-1 rounded-full font-utility">Inspired</span>}
+        {character.inspiration && <span className="wax-seal text-sm px-3 py-1 rounded-full font-utility">Inspired</span>}
         <div className="flex gap-2">
-          <button onClick={() => setStatusModalOpen(true)} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Status Effects</button>
-          <button onClick={openRoleplay} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Backstory</button>
+          <button onClick={() => setStatusModalOpen(true)} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Status Effects</button>
+          <button onClick={openRoleplay} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Backstory</button>
           {(spellSlots.length > 0 || resources.length > 0) && (
             <>
-              <button onClick={shortRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Short Rest</button>
-              <button onClick={longRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Long Rest</button>
+              <button onClick={shortRest} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Short Rest</button>
+              <button onClick={longRest} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Long Rest</button>
             </>
           )}
         </div>
@@ -464,7 +530,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
       <div className="grid grid-cols-12 gap-4">
         <section className="col-span-4 space-y-4">
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Abilities</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Abilities</h2>
             {ABILITIES.map((ab) => {
               const speciesBonus = character.species_asi?.[ab]
               const label = ab.charAt(0).toUpperCase() + ab.slice(1)
@@ -477,12 +543,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               return (
                 <div key={ab} className="mb-3.5 pb-3.5 border-b border-mist/40 last:border-0 last:pb-0 last:mb-0">
                   <div className="flex justify-between items-baseline mb-1.5">
-                    <span className="font-display text-sm capitalize text-parchment">
-                      {label}{speciesBonus ? <span className="text-candle text-xs"> (+{speciesBonus})</span> : ''}
+                    <span className="font-display text-base capitalize text-parchment">
+                      {label}{speciesBonus ? <span className="text-candle text-sm"> (+{speciesBonus})</span> : ''}
                     </span>
-                    <span className="text-sm">{character[ab]} ({modifier(character[ab])})</span>
+                    <span className="text-base">{character[ab]} ({modifier(character[ab])})</span>
                   </div>
-                  <div className="flex justify-between text-xs mb-1.5">
+                  <div className="flex justify-between text-sm mb-1.5">
                     <Tooltip
                       label={<span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}</span>}
                       title={`${label} Saving Throw`}
@@ -495,7 +561,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     const proficient = !!skillRow
                     const bonus = skillBonus(skillName)
                     return (
-                      <div key={skillName} className="flex justify-between text-xs pl-3 mb-0.5 py-0.5 rounded-sm hover:bg-mist/10 transition-colors -mx-1 px-1">
+                      <div key={skillName} className="flex justify-between text-sm pl-3 mb-0.5 py-0.5 rounded-sm hover:bg-mist/10 transition-colors -mx-1 px-1">
                         <Tooltip
                           label={<span className={proficient ? 'text-candle' : 'text-parchment/50'}>{skillName}{skillRow?.expertise ? ' *' : ''}</span>}
                           title={skillName}
@@ -513,8 +579,27 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
         <section className="col-span-4 space-y-4">
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Vitals</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
+            <div className="flex gap-1.5 mb-2.5">
+              <input
+                type="number"
+                value={hpAdjust}
+                onChange={(e) => setHpAdjust(e.target.value)}
+                placeholder="0"
+                className="w-16 bg-ink border border-mist rounded-sm text-center text-sm py-1 text-parchment focus:border-candle/50 outline-none"
+              />
+              <button onClick={applyDamage} className="flex-1 text-sm border border-blood-bright/50 text-blood-bright rounded-sm hover:bg-blood/20 transition-colors">Damage</button>
+              <button onClick={applyHealing} className="flex-1 text-sm border border-candle/50 text-candle rounded-sm hover:bg-candle/10 transition-colors">Heal</button>
+              <div className="flex-1">
+                <Tooltip
+                  label={<button onClick={setTempHp} className="w-full h-full text-sm border border-mist text-parchment/70 rounded-sm hover:border-candle/50 transition-colors px-2">Temp</button>}
+                  title="Temporary HP"
+                  body="Sets your temp HP to this amount — but only if it's higher than what you already have. Temp HP doesn't stack with itself, you just take the better value. It absorbs damage first, before your real HP."
+                  className="block h-full"
+                />
+              </div>
+            </div>
             <Row
               label={<Tooltip label="Armor Class" title="Armor Class (AC)" body="How hard you are to hit. An attacker's d20 roll plus their attack bonus must meet or beat this number to hit you." />}
               value={String(currentAC)}
@@ -542,49 +627,49 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               value={`${character.exhaustion_level} / 6`}
             />
             <div className="mt-3 pt-3 border-t border-mist/40">
-              <p className="text-[10px] text-parchment/40 uppercase tracking-wide text-center mb-2">Passive Scores (no roll needed)</p>
+              <p className="text-xs text-parchment/40 uppercase tracking-wide text-center mb-2">Passive Scores (no roll needed)</p>
               <div className="grid grid-cols-2 gap-x-2 gap-y-2 text-center">
                 <div>
                   <Tooltip
-                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Perception</div>}
+                    label={<div className="text-xs text-parchment/40 uppercase tracking-wide">Perception</div>}
                     title="Passive Perception"
                     body="How likely you are to notice something without actively searching — spotting an ambush, a lurker in the shadows, or an obvious trap in passing."
                   />
-                  <div className="text-candle text-sm">{10 + skillBonus('Perception')}</div>
+                  <div className="text-candle text-base">{10 + skillBonus('Perception')}</div>
                 </div>
                 <div>
                   <Tooltip
-                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Investigation</div>}
+                    label={<div className="text-xs text-parchment/40 uppercase tracking-wide">Investigation</div>}
                     title="Passive Investigation"
                     body="How likely you are to piece together a clue or spot a detail without deliberately searching for it."
                   />
-                  <div className="text-candle text-sm">{10 + skillBonus('Investigation')}</div>
+                  <div className="text-candle text-base">{10 + skillBonus('Investigation')}</div>
                 </div>
                 <div>
                   <Tooltip
-                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Insight</div>}
+                    label={<div className="text-xs text-parchment/40 uppercase tracking-wide">Insight</div>}
                     title="Passive Insight"
                     body="How likely you are to sense someone's lying or read their true intent without actively studying them."
                   />
-                  <div className="text-candle text-sm">{10 + skillBonus('Insight')}</div>
+                  <div className="text-candle text-base">{10 + skillBonus('Insight')}</div>
                 </div>
                 <div>
                   <Tooltip
-                    label={<div className="text-[10px] text-parchment/40 uppercase tracking-wide">Stealth</div>}
+                    label={<div className="text-xs text-parchment/40 uppercase tracking-wide">Stealth</div>}
                     title="Passive Stealth"
                     body="How hard you are to notice while trying to stay hidden — this is the number a creature's Perception check has to beat to spot you."
                   />
-                  <div className="text-candle text-sm">{10 + skillBonus('Stealth')}</div>
+                  <div className="text-candle text-base">{10 + skillBonus('Stealth')}</div>
                 </div>
               </div>
             </div>
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
             <div className="flex justify-between items-center mb-2">
               <Tooltip
-                label={<span className="text-sm">Successes</span>}
+                label={<span className="text-base">Successes</span>}
                 title="Death Saving Throws"
                 body="At 0 HP, roll a d20 at the start of each of your turns: 10 or higher is a success, lower is a failure. 3 successes stabilizes you at 0 HP; 3 failures means you die. A natural 20 instead returns you to 1 HP, and any damage taken while at 0 HP counts as an automatic failure (two if it's a critical hit)."
               />
@@ -596,7 +681,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             </div>
             <div className="flex justify-between items-center mb-2">
-              <span className="text-sm">Failures</span>
+              <span className="text-base">Failures</span>
               <div className="flex gap-1">
                 {[0, 1, 2].map((i) => (
                   <button key={i} onClick={() => setDeathSave('failure', i)}
@@ -605,16 +690,16 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             </div>
             {(character.death_save_successes > 0 || character.death_save_failures > 0) && (
-              <button onClick={resetDeathSaves} className="text-xs text-candle hover:text-parchment mb-2">Reset</button>
+              <button onClick={resetDeathSaves} className="text-sm text-candle hover:text-parchment mb-2">Reset</button>
             )}
-            <div className="flex justify-between items-center text-sm pt-2 border-t border-mist/40">
+            <div className="flex justify-between items-center text-base pt-2 border-t border-mist/40">
               <Tooltip
                 label={<span>Hit Dice</span>}
                 title="Hit Dice"
                 body="Spend one during a short rest to regain HP (roll the die and add your Constitution modifier, minimum 1 HP). You regain up to half your total hit dice (minimum 1) whenever you finish a long rest."
               />
               <div className="flex items-center gap-2">
-                <button onClick={spendHitDie} disabled={character.hit_dice_remaining <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
+                <button onClick={spendHitDie} disabled={character.hit_dice_remaining <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">−</button>
                 <span>{character.hit_dice_remaining} / {character.hit_dice_total} (d{character.class?.hit_die ?? 8})</span>
               </div>
             </div>
@@ -622,17 +707,17 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
           <div className="panel rounded-sm p-4">
             <div className="flex justify-between items-center mb-3">
-              <h2 className="font-display text-sm text-candle uppercase tracking-wide">Status Effects</h2>
-              <button onClick={() => setStatusModalOpen(true)} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">Manage</button>
+              <h2 className="font-display text-base text-candle uppercase tracking-wide">Status Effects</h2>
+              <button onClick={() => setStatusModalOpen(true)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">Manage</button>
             </div>
             {charConditions.length === 0 ? (
-              <p className="text-xs text-parchment/40 italic">None currently applied.</p>
+              <p className="text-sm text-parchment/40 italic">None currently applied.</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {charConditions.map((c) => (
                   <Tooltip
                     key={c.condition_id}
-                    label={<span className="wax-seal text-xs px-2 py-1 rounded-full inline-block">{c.conditions.name}</span>}
+                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{c.conditions.name}</span>}
                     title={c.conditions.name}
                     body={c.conditions.description}
                   />
@@ -642,10 +727,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
-            <table className="w-full text-sm">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
+            <table className="w-full text-base">
               <thead>
-                <tr className="text-[10px] text-parchment/40 uppercase tracking-wide text-left">
+                <tr className="text-xs text-parchment/40 uppercase tracking-wide text-left">
                   <th className="font-normal pb-1">Name</th>
                   <th className="font-normal pb-1">
                     <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better." />
@@ -681,7 +766,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </tbody>
             </table>
             {spellcastingAbility && (
-              <div className="text-xs text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+              <div className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
                 <Tooltip
                   label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
                   title="Spell Attack Bonus"
@@ -697,66 +782,66 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         <section className="col-span-4 space-y-4">
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
             <div className="panel rounded-sm p-4">
-              <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
               {character.draconic_ancestry && (
-                <div className="text-sm mb-1.5"><span className="text-candle">Draconic Ancestry:</span> {character.draconic_ancestry}</div>
+                <div className="text-base mb-1.5"><span className="text-candle">Draconic Ancestry:</span> {character.draconic_ancestry}</div>
               )}
               {character.favored_enemy && (
-                <div className="text-sm mb-1.5"><span className="text-candle">Favored Enemy:</span> {character.favored_enemy}</div>
+                <div className="text-base mb-1.5"><span className="text-candle">Favored Enemy:</span> {character.favored_enemy}</div>
               )}
               {character.favored_terrain && (
-                <div className="text-sm mb-1.5"><span className="text-candle">Favored Terrain:</span> {character.favored_terrain}</div>
+                <div className="text-base mb-1.5"><span className="text-candle">Favored Terrain:</span> {character.favored_terrain}</div>
               )}
               {allTraits.map((t) => (
-                <Tooltip key={t.name} label={<span className="block text-sm mb-1.5">{t.name}</span>} title={t.name} body={t.description} block />
+                <Tooltip key={t.name} label={<span className="block text-base mb-1.5">{t.name}</span>} title={t.name} body={t.description} block />
               ))}
             </div>
           )}
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Languages</h2>
-            <p className="text-sm">{languages.map((l) => l.language).join(', ') || 'Common'}</p>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Languages</h2>
+            <p className="text-base">{languages.map((l) => l.language).join(', ') || 'Common'}</p>
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
             {character.background?.feature_name ? (
-              <Tooltip label={<span className="block text-sm">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} block />
-            ) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
+              <Tooltip label={<span className="block text-base">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} block />
+            ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
             {character.chosen_tool_proficiency && (
-              <p className="text-xs text-parchment/60 mt-2"><span className="text-candle">Tool Proficiency:</span> {character.chosen_tool_proficiency}</p>
+              <p className="text-sm text-parchment/60 mt-2"><span className="text-candle">Tool Proficiency:</span> {character.chosen_tool_proficiency}</p>
             )}
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Class Features</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Class Features</h2>
             {classFeatures.map((f, i) => (
-              <Tooltip key={i} label={<span className="block text-sm mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
+              <Tooltip key={i} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
-            {classFeat && <Tooltip label={<span className="block text-sm mb-1.5">{classFeat.feats.name} <span className="text-parchment/40 text-xs">(Fighting Style)</span></span>} title={classFeat.feats.name} body={classFeat.feats.description} block />}
+            {classFeat && <Tooltip label={<span className="block text-base mb-1.5">{classFeat.feats.name} <span className="text-parchment/40 text-sm">(Fighting Style)</span></span>} title={classFeat.feats.name} body={classFeat.feats.description} block />}
             {subclassL1Features.map((f) => (
-              <Tooltip key={f.name} label={<span className="block text-sm mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
+              <Tooltip key={f.name} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
-            {variantFeat && <Tooltip label={<span className="block text-sm mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-xs">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} block />}
-            {classFeatures.length === 0 && !classFeat && subclassL1Features.length === 0 && !variantFeat && <p className="text-xs text-parchment/40 italic">None recorded.</p>}
+            {variantFeat && <Tooltip label={<span className="block text-base mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-sm">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} block />}
+            {classFeatures.length === 0 && !classFeat && subclassL1Features.length === 0 && !variantFeat && <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
 
           {resources.length > 0 && (
             <div className="panel rounded-sm p-4">
-              <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Resources</h2>
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Resources</h2>
               {resources.map((r) => {
                 const featureText = classFeatures.find((f) => f.name === r.name || r.name.includes(f.name) || f.name.includes(r.name))?.description
                 return (
-                  <div key={r.name} className="flex justify-between items-center text-sm mb-1.5">
+                  <div key={r.name} className="flex justify-between items-center text-base mb-1.5">
                     {featureText ? (
                       <Tooltip label={<span>{r.name}</span>} title={r.name} body={featureText} />
                     ) : (
                       <span>{r.name}</span>
                     )}
                     <div className="flex items-center gap-2">
-                      <button onClick={() => adjustResource(r.name, -1)} disabled={r.current_value <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
-                      <span>{r.current_value} / {r.max_value} <span className="text-parchment/40 text-xs">({r.recharge === 'short_rest' ? 'short rest' : 'long rest'})</span></span>
-                      <button onClick={() => adjustResource(r.name, 1)} disabled={r.current_value >= r.max_value} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">+</button>
+                      <button onClick={() => adjustResource(r.name, -1)} disabled={r.current_value <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">−</button>
+                      <span>{r.current_value} / {r.max_value} <span className="text-parchment/40 text-sm">({r.recharge === 'short_rest' ? 'short rest' : 'long rest'})</span></span>
+                      <button onClick={() => adjustResource(r.name, 1)} disabled={r.current_value >= r.max_value} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">+</button>
                     </div>
                   </div>
                 )
@@ -766,21 +851,21 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
           {availableEffects.length > 0 && (
             <div className="panel rounded-sm p-4">
-              <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Active Effects</h2>
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Active Effects</h2>
               {availableEffects.map((eff) => {
                 const isActive = activeEffects.find((e) => e.effect_name === eff.name)?.is_active ?? false
                 return (
                   <div key={eff.name} className="mb-2.5 last:mb-0">
                     <button
                       onClick={() => toggleEffect(eff.name, isActive)}
-                      className={`w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-sm border text-sm transition-colors ${
+                      className={`w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-sm border text-base transition-colors ${
                         isActive ? 'border-candle bg-blood/25 text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'
                       }`}
                     >
                       <span>{eff.name}</span>
-                      <span className="text-xs">{isActive ? 'ON' : 'OFF'}</span>
+                      <span className="text-sm">{isActive ? 'ON' : 'OFF'}</span>
                     </button>
-                    {isActive && <p className="text-xs text-parchment/70 mt-1.5 leading-snug">{eff.description}</p>}
+                    {isActive && <p className="text-sm text-parchment/70 mt-1.5 leading-snug">{eff.description}</p>}
                   </div>
                 )
               })}
@@ -788,57 +873,57 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           )}
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Currency</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Currency</h2>
             {currency ? (
               <div className="grid grid-cols-4 gap-2 text-center">
                 {([['cp', 'CP'], ['sp', 'SP'], ['gp', 'GP'], ['pp', 'PP']] as const).map(([field, label]) => (
                   <div key={field}>
-                    <div className="text-[10px] text-parchment/40 uppercase tracking-wide mb-1">{label}</div>
+                    <div className="text-xs text-parchment/40 uppercase tracking-wide mb-1">{label}</div>
                     <input
                       type="number"
                       defaultValue={currency[field]}
                       onBlur={(e) => updateCurrency(field, Number(e.target.value))}
-                      className="w-full bg-ink border border-mist rounded-sm text-center text-base py-2 text-parchment focus:border-candle/50 outline-none"
+                      className="w-full bg-ink border border-mist rounded-sm text-center text-lg py-2 text-parchment focus:border-candle/50 outline-none"
                     />
                   </div>
                 ))}
               </div>
-            ) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
+            ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
         </section>
 
         <section className="col-span-12 grid grid-cols-2 gap-4">
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Spells</h2>
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Spells</h2>
             {spellSlots.length > 0 && (
               <div className="mb-3 pb-3 border-b border-mist/50">
                 {spellSlots.map((sl) => (
-                  <div key={sl.slot_level} className="flex justify-between items-center text-sm">
+                  <div key={sl.slot_level} className="flex justify-between items-center text-base">
                     <span>{character.class?.spellcasting_type === 'pact' ? 'Pact Magic Slot' : `Level ${sl.slot_level} Slots`}</span>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => adjustSlot(sl.slot_level, 1)} disabled={sl.used_slots >= sl.max_slots} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
+                      <button onClick={() => adjustSlot(sl.slot_level, 1)} disabled={sl.used_slots >= sl.max_slots} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">−</button>
                       <span>{sl.max_slots - sl.used_slots} / {sl.max_slots}</span>
-                      <button onClick={() => adjustSlot(sl.slot_level, -1)} disabled={sl.used_slots <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">+</button>
+                      <button onClick={() => adjustSlot(sl.slot_level, -1)} disabled={sl.used_slots <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">+</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
             {cantrips.length === 0 && knownSpells.length === 0 ? (
-              <p className="text-xs text-parchment/40 italic">{character.class?.spellcasting_type ? 'No spells selected (or your class doesn\u2019t cast until a later level).' : 'Non-caster — no spell panel needed.'}</p>
+              <p className="text-sm text-parchment/40 italic">{character.class?.spellcasting_type ? 'No spells selected (or your class doesn\u2019t cast until a later level).' : 'Non-caster — no spell panel needed.'}</p>
             ) : (
               <>
                 {cantrips.map((s) => (
-                  <Tooltip key={s.spells.name} label={<span className="block text-sm mb-1.5">{s.spells.name} <span className="text-parchment/40 text-xs">(cantrip)</span></span>} title={s.spells.name} subtitle={`Cantrip · ${s.spells.school}`} body={s.spells.description} block />
+                  <Tooltip key={s.spells.name} label={<span className="block text-base mb-1.5">{s.spells.name} <span className="text-parchment/40 text-sm">(cantrip)</span></span>} title={s.spells.name} subtitle={`Cantrip · ${s.spells.school}`} body={s.spells.description} block />
                 ))}
                 {knownSpells.map((s) => {
                   const matchingSlot = spellSlots.find((sl) => sl.slot_level === s.spells.level)
                   const canCast = matchingSlot ? matchingSlot.used_slots < matchingSlot.max_slots : false
                   return (
                     <div key={s.spells.name} className="flex items-center justify-between mb-1.5">
-                      <Tooltip label={<span className="text-sm">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-xs"> (always prepared)</span> : ''}</span>} title={s.spells.name} subtitle={`Level ${s.spells.level} · ${s.spells.school}`} body={s.spells.description} />
+                      <Tooltip label={<span className="text-base">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-sm"> (always prepared)</span> : ''}</span>} title={s.spells.name} subtitle={`Level ${s.spells.level} · ${s.spells.school}`} body={s.spells.description} />
                       {matchingSlot && (
-                        <button onClick={() => adjustSlot(s.spells.level, 1)} disabled={!canCast} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle">
+                        <button onClick={() => adjustSlot(s.spells.level, 1)} disabled={!canCast} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle">
                           Cast
                         </button>
                       )}
@@ -851,10 +936,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
           <div className="panel rounded-sm p-4">
             <div className="flex justify-between items-baseline mb-3">
-              <h2 className="font-display text-sm text-candle uppercase tracking-wide">Inventory</h2>
+              <h2 className="font-display text-base text-candle uppercase tracking-wide">Inventory</h2>
               <Tooltip
                 label={
-                  <span className={`text-xs ${totalUnitsCarried > carryCapacity ? 'text-blood-bright' : 'text-parchment/50'}`}>
+                  <span className={`text-sm ${totalUnitsCarried > carryCapacity ? 'text-blood-bright' : 'text-parchment/50'}`}>
                     {totalUnitsCarried} / {carryCapacity} units{totalUnitsCarried > carryCapacity ? ' — encumbered' : ''}
                   </span>
                 }
@@ -878,27 +963,27 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               })
               return (
                 <div key={row.id} className="mb-1.5">
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center justify-between text-base">
                     <div className="flex items-center gap-1.5">
                       {isContainer && (
-                        <button onClick={() => toggleContainer(row.id)} className="text-parchment/50 hover:text-candle text-xs w-4">
+                        <button onClick={() => toggleContainer(row.id)} className="text-parchment/50 hover:text-candle text-sm w-4">
                           {isExpanded ? '▾' : '▸'}
                         </button>
                       )}
                       {row.items ? (
-                        <Tooltip label={<span>{row.quantity}× {name}{row.equipped ? <span className="text-candle text-xs"> (equipped)</span> : ''}</span>} title={name} body={row.items.description} />
+                        <Tooltip label={<span>{row.quantity}× {name}{row.equipped ? <span className="text-candle text-sm"> (equipped)</span> : ''}</span>} title={name} body={row.items.description} />
                       ) : (
-                        <span>{row.quantity}× {name}{row.equipped ? <span className="text-candle text-xs"> (equipped)</span> : ''}</span>
+                        <span>{row.quantity}× {name}{row.equipped ? <span className="text-candle text-sm"> (equipped)</span> : ''}</span>
                       )}
                       {isContainer && capacity != null && (
-                        <span className={`text-xs ${usedInContainer > capacity ? 'text-blood-bright' : 'text-parchment/40'}`}>
+                        <span className={`text-sm ${usedInContainer > capacity ? 'text-blood-bright' : 'text-parchment/40'}`}>
                           ({usedInContainer}/{capacity})
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
                       {!isContainer && (row.items?.category === 'weapon' || row.items?.category === 'armor') && (
-                        <button onClick={() => toggleEquipped(row.id, row.equipped)} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">
+                        <button onClick={() => toggleEquipped(row.id, row.equipped)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">
                           {row.equipped ? 'Unequip' : 'Equip'}
                         </button>
                       )}
@@ -906,7 +991,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                         <select
                           defaultValue=""
                           onChange={(e) => { if (e.target.value) moveItem(row.id, e.target.value) }}
-                          className="bg-ink border border-mist rounded-sm text-xs text-parchment/60 px-1 py-0.5"
+                          className="bg-ink border border-mist rounded-sm text-sm text-parchment/60 px-1 py-0.5"
                         >
                           <option value="" disabled>{'Put in\u2026'}</option>
                           {fittingContainers.map((c) => (
@@ -918,17 +1003,17 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                   </div>
                   {isContainer && isExpanded && (
                     <div className="ml-6 mt-1.5 pl-2 border-l border-mist/40 space-y-1">
-                      {children.length === 0 && <p className="text-xs text-parchment/40 italic">Empty.</p>}
+                      {children.length === 0 && <p className="text-sm text-parchment/40 italic">Empty.</p>}
                       {children.map((child) => {
                         const childName = child.items?.name ?? child.item_name ?? 'Unknown item'
                         return (
-                          <div key={child.id} className="flex items-center justify-between text-sm">
+                          <div key={child.id} className="flex items-center justify-between text-base">
                             {child.items ? (
                               <Tooltip label={<span>{child.quantity}× {childName}</span>} title={childName} body={child.items.description} />
                             ) : (
                               <span>{child.quantity}× {childName}</span>
                             )}
-                            <button onClick={() => moveItem(child.id, null)} className="text-xs text-candle hover:text-parchment">Take out</button>
+                            <button onClick={() => moveItem(child.id, null)} className="text-sm text-candle hover:text-parchment">Take out</button>
                           </div>
                         )
                       })}
@@ -936,14 +1021,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                   )}
                 </div>
               )
-            }) : <p className="text-xs text-parchment/40 italic">No equipment recorded.</p>}
+            }) : <p className="text-sm text-parchment/40 italic">No equipment recorded.</p>}
           </div>
         </section>
       </div>
     </main>
 
     <Modal open={statusModalOpen} onClose={() => setStatusModalOpen(false)} title="Status Effects">
-      <p className="text-xs text-parchment/50 mb-4">Toggle any conditions currently affecting {character.name}. They'll show as pills on the sheet with their full rules text on hover.</p>
+      <p className="text-sm text-parchment/50 mb-4">Toggle any conditions currently affecting {character.name}. They'll show as pills on the sheet with their full rules text on hover.</p>
       <div className="grid grid-cols-2 gap-2">
         {conditionsList.map((c) => {
           const active = charConditions.some((cc) => cc.condition_id === c.id)
@@ -951,13 +1036,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             <button
               key={c.id}
               onClick={() => toggleCondition(c.id, c.name, c.description)}
-              className={`text-left px-3 py-2 rounded-sm border text-sm transition-colors ${active ? 'border-candle bg-blood/25 text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+              className={`text-left px-3 py-2 rounded-sm border text-base transition-colors ${active ? 'border-candle bg-blood/25 text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
             >
               <div className="flex justify-between items-center mb-0.5">
                 <span>{c.name}</span>
-                <span className="text-xs">{active ? 'ON' : 'OFF'}</span>
+                <span className="text-sm">{active ? 'ON' : 'OFF'}</span>
               </div>
-              <p className="text-xs text-parchment/50 leading-snug">{c.description}</p>
+              <p className="text-sm text-parchment/50 leading-snug">{c.description}</p>
             </button>
           )
         })}
@@ -975,18 +1060,18 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           ['backstory', 'Backstory'],
         ] as const).map(([key, label]) => (
           <div key={key}>
-            <label className="text-xs text-candle uppercase tracking-wide">{label}</label>
+            <label className="text-sm text-candle uppercase tracking-wide">{label}</label>
             <textarea
               value={roleplayDraft[key]}
               onChange={(e) => setRoleplayDraft((prev) => ({ ...prev, [key]: e.target.value }))}
               rows={key === 'backstory' ? 6 : 2}
-              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1 text-parchment focus:border-candle/50 outline-none"
+              className="w-full bg-ink border border-mist rounded-sm p-2 text-base mt-1 text-parchment focus:border-candle/50 outline-none"
             />
           </div>
         ))}
         <div className="flex justify-end gap-2 pt-2">
-          <button onClick={() => setRoleplayModalOpen(false)} className="text-xs text-parchment/60 hover:text-parchment px-3 py-1.5">Cancel</button>
-          <button onClick={saveRoleplay} className="text-xs bg-blood hover:bg-blood-bright transition rounded-sm px-3 py-1.5">Save</button>
+          <button onClick={() => setRoleplayModalOpen(false)} className="text-sm text-parchment/60 hover:text-parchment px-3 py-1.5">Cancel</button>
+          <button onClick={saveRoleplay} className="text-sm bg-blood hover:bg-blood-bright transition rounded-sm px-3 py-1.5">Save</button>
         </div>
       </div>
     </Modal>
@@ -996,7 +1081,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
 function Row({ label, value, dim }: { label: React.ReactNode; value: string; dim?: boolean }) {
   return (
-    <div className="flex justify-between text-sm mb-1">
+    <div className="flex justify-between text-base mb-1">
       <span>{label}</span>
       <span className={dim ? 'text-parchment/40' : ''}>{value}</span>
     </div>
