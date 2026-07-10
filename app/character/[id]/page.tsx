@@ -688,38 +688,44 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               const relatedSkills = ALL_SKILLS.filter((s) => SKILL_ABILITY[s] === ab)
               return (
                 <div key={ab} className="mb-3.5 pb-3.5 border-b border-mist/40 last:border-0 last:pb-0 last:mb-0">
-                  <div className="flex justify-between items-baseline mb-1.5">
+                  <div
+                    onClick={() => rollCheck(`${label} Check`, abMod)}
+                    className="flex justify-between items-baseline mb-1.5 cursor-pointer hover:bg-mist/10 transition-colors -mx-1 px-1 rounded-sm py-0.5"
+                  >
                     <span className="font-display text-base capitalize text-parchment">
                       {label}{speciesBonus ? <span className="text-candle text-sm"> (+{speciesBonus})</span> : ''}
                     </span>
-                    <button onClick={() => rollCheck(`${label} Check`, abMod)} className="text-base hover:text-candle transition-colors">
+                    <span className="text-base hover:text-candle transition-colors">
                       {character[ab]} ({modifier(character[ab])})
-                    </button>
+                    </span>
                   </div>
-                  <div className="flex justify-between text-sm mb-1.5">
+                  <div
+                    onClick={() => rollCheck(`${label} Save`, saveBonus)}
+                    className="flex justify-between text-sm mb-1.5 cursor-pointer hover:bg-mist/10 transition-colors -mx-1 px-1 rounded-sm py-0.5"
+                  >
                     <Tooltip
                       label={<span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}</span>}
                       title={`${label} Saving Throw`}
-                      body="Rolled to resist an effect trying to happen to you — like being knocked prone, thrown from a cliff, or gripped by a spell. Different abilities cover different kinds of resistance. Click the number to roll it."
+                      body="Rolled to resist an effect trying to happen to you — like being knocked prone, thrown from a cliff, or gripped by a spell. Different abilities cover different kinds of resistance. Click anywhere on this row to roll it."
                     />
-                    <button onClick={() => rollCheck(`${label} Save`, saveBonus)} className={`hover:text-candle transition-colors ${saveProficient ? 'text-candle' : 'text-parchment/60'}`}>
-                      {saveBonus >= 0 ? `+${saveBonus}` : saveBonus}
-                    </button>
+                    <span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>{saveBonus >= 0 ? `+${saveBonus}` : saveBonus}</span>
                   </div>
                   {relatedSkills.map((skillName) => {
                     const skillRow = skills.find((s) => s.skill_name === skillName)
                     const proficient = !!skillRow
                     const bonus = skillBonus(skillName)
                     return (
-                      <div key={skillName} className="flex justify-between text-sm pl-3 mb-0.5 py-0.5 rounded-sm hover:bg-mist/10 transition-colors -mx-1 px-1">
+                      <div
+                        key={skillName}
+                        onClick={() => rollCheck(skillName, bonus)}
+                        className="flex justify-between text-sm pl-3 mb-0.5 py-0.5 rounded-sm hover:bg-mist/10 transition-colors -mx-1 px-1 cursor-pointer"
+                      >
                         <Tooltip
                           label={<span className={proficient ? 'text-candle' : 'text-parchment/50'}>{skillName}{skillRow?.expertise ? ' *' : ''}</span>}
                           title={skillName}
-                          body={`${SKILL_DESCRIPTIONS[skillName]}${skillRow?.expertise ? ' (Expertise: proficiency bonus is doubled for this skill.)' : ''} Click the number to roll it.`}
+                          body={`${SKILL_DESCRIPTIONS[skillName]}${skillRow?.expertise ? ' (Expertise: proficiency bonus is doubled for this skill.)' : ''} Click anywhere on this row to roll it.`}
                         />
-                        <button onClick={() => rollCheck(skillName, bonus)} className={`hover:text-candle transition-colors ${proficient ? 'text-candle' : 'text-parchment/50'}`}>
-                          {bonus >= 0 ? `+${bonus}` : bonus}
-                        </button>
+                        <span className={proficient ? 'text-candle' : 'text-parchment/50'}>{bonus >= 0 ? `+${bonus}` : bonus}</span>
                       </div>
                     )
                   })}
@@ -763,12 +769,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               />
             )}
             <Row
-              label={<Tooltip label="Initiative" title="Initiative" body="Added to a d20 roll at the start of combat. Highest total goes first, and that turn order holds for the rest of the fight. Click to roll it." />}
-              value={
-                <button onClick={() => rollCheck('Initiative', character.initiative_bonus)} className="hover:text-candle transition-colors">
-                  {character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)}
-                </button>
-              }
+              label={<Tooltip label="Initiative" title="Initiative" body="Added to a d20 roll at the start of combat. Highest total goes first, and that turn order holds for the rest of the fight. Click anywhere on this row to roll it." />}
+              value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)}
+              onClick={() => rollCheck('Initiative', character.initiative_bonus)}
             />
             <Row
               label={<Tooltip label="Speed" title="Speed" body="How far you can move, in feet, on your turn. Difficult terrain, being Prone, or certain conditions can reduce how far that movement actually gets you." />}
@@ -880,96 +883,6 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     title={c.conditions.name}
                     body={c.conditions.description}
                   />
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
-            <table className="w-full text-base">
-              <thead>
-                <tr className="text-xs text-parchment/40 uppercase tracking-wide text-left">
-                  <th className="font-normal pb-1">Name</th>
-                  <th className="font-normal pb-1">
-                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better. Click a value to roll it." />
-                  </th>
-                  <th className="font-normal pb-1">
-                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in. Click a value to roll it — if your last attack roll for that weapon was a natural 20, damage automatically doubles." />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                  <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
-                  <td className="py-1 pr-2 text-parchment/70">
-                    <button
-                      onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
-                      className="hover:text-candle transition-colors"
-                    >
-                      {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
-                    </button>
-                  </td>
-                  <td className="py-1 text-parchment/50">
-                    <button
-                      onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
-                      className="hover:text-candle transition-colors"
-                    >
-                      1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
-                    </button>
-                  </td>
-                </tr>
-                {equippedWeapons.map((row) => {
-                  const bonus = weaponAttackBonus(row)
-                  const dmg = weaponDamage(row)
-                  const name = row.items?.name ?? 'Weapon'
-                  return (
-                    <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                      <td className="py-1 pr-2">{name}</td>
-                      <td className="py-1 pr-2">
-                        <button onClick={() => rollAttack(row.id, name, bonus)} className="hover:text-candle transition-colors">
-                          {bonus >= 0 ? `+${bonus}` : bonus}
-                        </button>
-                      </td>
-                      <td className="py-1 text-parchment/70">
-                        <button onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="hover:text-candle transition-colors">
-                          {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
-                          {lastCrit[row.id] && <span className="text-blood-bright"> (crit ready)</span>}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            {spellcastingAbility && (
-              <div className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
-                <Tooltip
-                  label={
-                    <button onClick={() => rollCheck(`${character.class?.name} Spell Attack`, PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2))} className="hover:text-candle transition-colors">
-                      Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}
-                    </button>
-                  }
-                  title="Spell Attack Bonus"
-                  body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead. Click to roll it."
-                />
-                {' · '}
-                <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
-              </div>
-            )}
-          </div>
-
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
-            {rollLog.length === 0 ? (
-              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
-            ) : (
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                {rollLog.map((entry, i) => (
-                  <div key={i} className="text-sm flex gap-2">
-                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
-                    <span className="text-parchment/70">{entry.text}</span>
-                  </div>
                 ))}
               </div>
             )}
@@ -1086,6 +999,91 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 ))}
               </div>
             ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
+          </div>
+        </section>
+
+        <section className="col-start-5 col-span-8 grid grid-cols-2 gap-4">
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
+            <table className="w-full text-base">
+              <thead>
+                <tr className="text-xs text-parchment/40 uppercase tracking-wide text-left">
+                  <th className="font-normal pb-1">Name</th>
+                  <th className="font-normal pb-1">
+                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better. Click to roll it." />
+                  </th>
+                  <th className="font-normal pb-1">
+                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in. Click to roll it — if your last attack roll for that weapon was a natural 20, damage automatically doubles." />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                  <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
+                  <td
+                    onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
+                    className="py-1 pr-2 text-parchment/70 cursor-pointer hover:text-candle transition-colors"
+                  >
+                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                  </td>
+                  <td
+                    onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
+                    className="py-1 text-parchment/50 cursor-pointer hover:text-candle transition-colors"
+                  >
+                    1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
+                  </td>
+                </tr>
+                {equippedWeapons.map((row) => {
+                  const bonus = weaponAttackBonus(row)
+                  const dmg = weaponDamage(row)
+                  const name = row.items?.name ?? 'Weapon'
+                  return (
+                    <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                      <td className="py-1 pr-2">{name}</td>
+                      <td onClick={() => rollAttack(row.id, name, bonus)} className="py-1 pr-2 cursor-pointer hover:text-candle transition-colors">
+                        {bonus >= 0 ? `+${bonus}` : bonus}
+                      </td>
+                      <td onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="py-1 text-parchment/70 cursor-pointer hover:text-candle transition-colors">
+                        {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                        {lastCrit[row.id] && <span className="text-blood-bright"> (crit ready)</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            {spellcastingAbility && (
+              <div className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+                <span
+                  onClick={() => rollCheck(`${character.class?.name} Spell Attack`, PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2))}
+                  className="cursor-pointer hover:text-candle transition-colors"
+                >
+                  <Tooltip
+                    label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
+                    title="Spell Attack Bonus"
+                    body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead. Click to roll it."
+                  />
+                </span>
+                {' · '}
+                <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
+              </div>
+            )}
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
+            {rollLog.length === 0 ? (
+              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                {rollLog.map((entry, i) => (
+                  <div key={i} className="text-sm flex gap-2">
+                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
+                    <span className="text-parchment/70">{entry.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
@@ -1225,9 +1223,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     </main>
 
     {rollToast && (
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 panel rounded-sm px-5 py-3 shadow-seal max-w-md text-center">
-        <p className="text-base text-candle">{rollToast}</p>
-        <button onClick={() => setRollToast(null)} className="text-sm text-parchment/40 hover:text-parchment mt-1">Dismiss</button>
+      <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 roll-toast rounded-sm pl-4 pr-5 py-3 max-w-lg flex items-start gap-3">
+        <span className="wax-seal rounded-full w-2.5 h-2.5 mt-1.5 shrink-0" />
+        <div>
+          <p className="text-lg text-candle leading-snug">{rollToast}</p>
+          <button onClick={() => setRollToast(null)} className="text-sm text-parchment/40 hover:text-parchment mt-1">Dismiss</button>
+        </div>
       </div>
     )}
 
@@ -1283,9 +1284,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   )
 }
 
-function Row({ label, value, dim }: { label: React.ReactNode; value: React.ReactNode; dim?: boolean }) {
+function Row({ label, value, dim, onClick }: { label: React.ReactNode; value: React.ReactNode; dim?: boolean; onClick?: () => void }) {
   return (
-    <div className="flex justify-between text-base mb-1">
+    <div
+      onClick={onClick}
+      className={`flex justify-between text-base mb-1 ${onClick ? 'cursor-pointer hover:bg-mist/10 transition-colors -mx-1 px-1 rounded-sm' : ''}`}
+    >
       <span>{label}</span>
       <span className={dim ? 'text-parchment/40' : ''}>{value}</span>
     </div>

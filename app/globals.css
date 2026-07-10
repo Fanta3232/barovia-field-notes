@@ -29,6 +29,20 @@ body {
   border: 1px solid rgba(201,162,75,0.4);
 }
 
+/* High-contrast, opaque — deliberately NOT using .panel's subtle translucency, since this
+   needs to grab attention as a floating notification rather than blend in as page content. */
+.roll-toast {
+  background: #17131a;
+  border: 1px solid rgba(201,162,75,0.7);
+  box-shadow: 0 0 0 1px rgba(201,162,75,0.2), 0 4px 6px rgba(0,0,0,0.3), 0 12px 32px rgba(0,0,0,0.7);
+  animation: roll-toast-in 0.2s ease-out;
+}
+
+@keyframes roll-toast-in {
+  from { opacity: 0; transform: translate(-50%, -16px) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
 /* subtle focus ring, keyboard accessible */
 :focus-visible {
   outline: 2px solid #C9A24B;
