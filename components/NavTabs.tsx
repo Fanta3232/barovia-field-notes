@@ -11,6 +11,10 @@ const TABS = [
   { label: 'Souls in Barovia', href: '/characters' },
 ]
 
+// Styled distinctly (blood-red rather than candle-gold) since it's DM tooling, not a
+// player-facing page — the color itself is the "you are somewhere different now" signal.
+const DM_TAB = { label: 'DM Panel', href: '/admin' }
+
 export default function NavTabs() {
   const pathname = usePathname()
 
@@ -36,6 +40,16 @@ export default function NavTabs() {
           </Link>
         )
       })}
+      <Link
+        href={DM_TAB.href}
+        className={`font-display text-sm px-3 py-3 border-b-2 transition-colors whitespace-nowrap ml-auto ${
+          pathname === DM_TAB.href || pathname?.startsWith(DM_TAB.href + '/')
+            ? 'border-blood-bright text-blood-bright'
+            : 'border-transparent text-blood-bright/50 hover:text-blood-bright'
+        }`}
+      >
+        {DM_TAB.label}
+      </Link>
     </nav>
   )
 }
