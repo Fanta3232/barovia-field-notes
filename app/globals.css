@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@400;600&family=Crimson+Pro:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0C0A0E;
+  background-image:
+    radial-gradient(ellipse at top, rgba(107,18,32,0.12), transparent 60%),
+    radial-gradient(ellipse at bottom, rgba(58,56,68,0.15), transparent 60%);
+  color: #EAE2D6;
+  font-family: 'Crimson Pro', Georgia, serif;
+}
+
+.font-display {
+  font-family: 'Cinzel Decorative', 'Cinzel', serif;
+  letter-spacing: 0.02em;
+}
+
+.panel {
+  background: linear-gradient(180deg, rgba(20,17,23,0.9), rgba(12,10,14,0.95));
+  border: 1px solid rgba(201,162,75,0.2);
+  box-shadow: 0 0 0 1px rgba(201,162,75,0.08), 0 8px 24px rgba(0,0,0,0.5);
+}
+
+.wax-seal {
+  background: radial-gradient(circle at 30% 30%, #8a1c2e, #4a0e18);
+  border: 1px solid rgba(201,162,75,0.4);
+}
+
+/* subtle focus ring, keyboard accessible */
+:focus-visible {
+  outline: 2px solid #C9A24B;
+  outline-offset: 2px;
+}
