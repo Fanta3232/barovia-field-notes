@@ -628,7 +628,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   return (
     <>
     <main className="min-h-screen px-6 py-8 max-w-6xl mx-auto">
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-baseline justify-between mb-3 flex-wrap gap-3">
         <div>
           <h1 className="font-display text-4xl text-candle">{character.name}</h1>
           <p className="text-base text-parchment/60">
@@ -637,7 +637,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </p>
         </div>
         {character.inspiration && <span className="wax-seal text-sm px-3 py-1 rounded-full font-utility">Inspired</span>}
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => setCombatMode(true)}
             className="text-sm border border-blood-bright/60 text-blood-bright rounded-sm px-3 py-1.5 hover:bg-blood/20 transition-colors font-display tracking-wide"
@@ -875,8 +875,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </div>
       ) : (
-      <div className="grid grid-cols-12 gap-4">
-        <section className="col-span-4 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <section className="md:col-span-4 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Abilities</h2>
             {ABILITIES.map((ab) => {
@@ -937,7 +937,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
 
-        <section className="col-span-4 space-y-4">
+        <section className="md:col-span-4 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
@@ -1091,7 +1091,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
 
-        <section className="col-span-4 space-y-4">
+        <section className="md:col-span-4 space-y-4">
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
             <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
@@ -1215,7 +1215,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
 
-        <section className="col-start-5 col-span-8 grid grid-cols-2 gap-4">
+        <section className="grid grid-cols-1 md:col-start-5 md:col-span-8 md:grid-cols-2 gap-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
             <table className="w-full text-base">
@@ -1300,7 +1300,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
 
-        <section className="col-span-12 grid grid-cols-2 gap-4">
+        <section className="md:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Spells</h2>
             {spellSlots.length > 0 && (
