@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Tooltip from '@/components/Tooltip'
+import Modal from '@/components/Modal'
+import { ALL_SKILLS, SKILL_ABILITY } from '@/lib/types'
 
 type FullCharacter = {
   id: string
@@ -18,6 +20,10 @@ type FullCharacter = {
   speed: number
   exhaustion_level: number
   inspiration: boolean
+  death_save_successes: number
+  death_save_failures: number
+  hit_dice_total: number
+  hit_dice_remaining: number
   strength: number
   dexterity: number
   constitution: number
@@ -30,6 +36,12 @@ type FullCharacter = {
   favored_terrain: string | null
   resilient_ability: string | null
   chosen_tool_proficiency: string | null
+  personality_traits: string | null
+  ideals: string | null
+  bonds: string | null
+  flaws: string | null
+  backstory: string | null
+  appearance: string | null
   species: { name: string; traits: { name: string; description: string }[] } | null
   species_subrace: { name: string; traits: { name: string; description: string }[] } | null
   background: { name: string; feature_name: string | null; feature_description: string | null } | null
@@ -37,7 +49,7 @@ type FullCharacter = {
   subclass: { name: string; features: { name: string; description: string; level: number }[] } | null
 }
 
-type SkillRow = { skill_name: string }
+type SkillRow = { skill_name: string; expertise: boolean }
 type LanguageRow = { language: string }
 type FeatRow = { source: string; feats: { name: string; description: string; category: string } }
 type SpellRow = { is_prepared: boolean; is_always_known: boolean; spells: { name: string; level: number; school: string; description: string } }
@@ -47,13 +59,15 @@ type InventoryRow = {
   item_name: string | null
   parent_inventory_id: string | null
   equipped: boolean
-  items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null; category: string; properties: Record<string, any> } | null
+  items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null; category: string; properties: Record<string, any>; weapon_range: string | null } | null
 }
 type CurrencyRow = { gp: number; sp: number; cp: number; pp: number; ep: number }
 type ClassFeatureRow = { name: string; description: string; level: number }
 type SpellSlotRow = { slot_level: number; max_slots: number; used_slots: number }
 type ResourceRow = { name: string; max_value: number; current_value: number; recharge: string }
 type ActiveEffectRow = { effect_name: string; is_active: boolean }
+type ConditionRow = { id: string; name: string; description: string }
+type CharConditionRow = { condition_id: string; conditions: { name: string; description: string } }
 
 // Class abilities with a genuine on/off toggle shape at level 1. Deliberately small — Second
 // Wind (Fighter) is a one-time resource use already covered by character_resources, and
@@ -71,6 +85,10 @@ const CLASS_EFFECTS: Record<string, { name: string; description: string }[]> = {
 }
 
 const ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'] as const
+// Hardcoded at +2 (level 1) since leveling isn't built yet — every proficiency-bonus
+// calculation on the sheet references this one constant so it only needs updating in one
+// place once leveling exists.
+const PROF_BONUS = 2
 
 export default function CharacterSheetPage({ params }: { params: { id: string } }) {
   const [character, setCharacter] = useState<FullCharacter | null>(null)
@@ -85,23 +103,32 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const [spellSlots, setSpellSlots] = useState<SpellSlotRow[]>([])
   const [resources, setResources] = useState<ResourceRow[]>([])
   const [activeEffects, setActiveEffects] = useState<ActiveEffectRow[]>([])
+  const [conditionsList, setConditionsList] = useState<ConditionRow[]>([])
+  const [charConditions, setCharConditions] = useState<CharConditionRow[]>([])
+  const [statusModalOpen, setStatusModalOpen] = useState(false)
+  const [roleplayModalOpen, setRoleplayModalOpen] = useState(false)
+  const [roleplayDraft, setRoleplayDraft] = useState({
+    personality_traits: '', ideals: '', bonds: '', flaws: '', backstory: '', appearance: '',
+  })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
-      const [charRes, skillsRes, langRes, featsRes, spellsRes, invRes, currRes, slotsRes, resourcesRes, effectsRes] = await Promise.all([
+      const [charRes, skillsRes, langRes, featsRes, spellsRes, invRes, currRes, slotsRes, resourcesRes, effectsRes, conditionsRes, charConditionsRes] = await Promise.all([
         supabase.from('characters')
           .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, spellcasting_ability, saving_throw_proficiencies), subclass:subclass_id(name, features)')
           .eq('id', params.id).single(),
-        supabase.from('character_skills').select('skill_name').eq('character_id', params.id),
+        supabase.from('character_skills').select('skill_name, expertise').eq('character_id', params.id),
         supabase.from('character_languages').select('language').eq('character_id', params.id),
         supabase.from('character_feats').select('source, feats:feat_id(name, description, category)').eq('character_id', params.id),
         supabase.from('character_spells').select('is_prepared, is_always_known, spells:spell_id(name, level, school, description)').eq('character_id', params.id),
-        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity, category, properties)').eq('character_id', params.id),
+        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity, category, properties, weapon_range)').eq('character_id', params.id),
         supabase.from('character_currency').select('gp, sp, cp, pp, ep').eq('character_id', params.id).single(),
         supabase.from('character_spell_slots').select('slot_level, max_slots, used_slots').eq('character_id', params.id),
         supabase.from('character_resources').select('name, max_value, current_value, recharge').eq('character_id', params.id),
         supabase.from('character_active_effects').select('effect_name, is_active').eq('character_id', params.id),
+        supabase.from('conditions').select('id, name, description').order('name'),
+        supabase.from('character_conditions').select('condition_id, conditions:condition_id(name, description)').eq('character_id', params.id),
       ])
       const char = charRes.data as unknown as FullCharacter
       setCharacter(char)
@@ -114,6 +141,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
       setSpellSlots((slotsRes.data ?? []) as SpellSlotRow[])
       setResources((resourcesRes.data ?? []) as ResourceRow[])
       setActiveEffects((effectsRes.data ?? []) as ActiveEffectRow[])
+      setConditionsList((conditionsRes.data ?? []) as ConditionRow[])
+      setCharConditions((charConditionsRes.data ?? []) as unknown as CharConditionRow[])
 
       // Class features (Rage, Sneak Attack, Second Wind, etc.) were found missing entirely
       // from the sheet during the gap-hunting pass — only Fighting Style and subclass features
@@ -229,11 +258,15 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   }
 
   async function longRest() {
+    const hdRecover = Math.max(1, Math.floor((character?.hit_dice_total ?? 1) / 2))
+    const nextHd = Math.min(character?.hit_dice_total ?? 1, (character?.hit_dice_remaining ?? 0) + hdRecover)
     setSpellSlots((prev) => prev.map((s) => ({ ...s, used_slots: 0 })))
     setResources((prev) => prev.map((r) => ({ ...r, current_value: r.max_value })))
+    setCharacter((prev) => prev ? { ...prev, hit_dice_remaining: nextHd } : prev)
     await Promise.all([
       supabase.from('character_spell_slots').update({ used_slots: 0 }).eq('character_id', params.id),
       ...resources.map((r) => supabase.from('character_resources').update({ current_value: r.max_value }).eq('character_id', params.id).eq('name', r.name)),
+      supabase.from('characters').update({ hit_dice_remaining: nextHd }).eq('id', params.id),
     ])
   }
 
@@ -243,6 +276,57 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     await Promise.all(
       shortRestResources.map((r) => supabase.from('character_resources').update({ current_value: r.max_value }).eq('character_id', params.id).eq('name', r.name))
     )
+  }
+
+  async function spendHitDie() {
+    const next = Math.max(0, (character?.hit_dice_remaining ?? 0) - 1)
+    setCharacter((prev) => prev ? { ...prev, hit_dice_remaining: next } : prev)
+    await supabase.from('characters').update({ hit_dice_remaining: next }).eq('id', params.id)
+  }
+
+  // Clicking a death-save bubble fills it and every bubble before it; clicking an already-
+  // filled bubble reduces the count back down to that point. Same interaction pattern people
+  // already know from other trackers (spell slots, resources).
+  async function setDeathSave(kind: 'success' | 'failure', index: number) {
+    const field = kind === 'success' ? 'death_save_successes' : 'death_save_failures'
+    const current = character?.[field] ?? 0
+    const next = current > index ? index : index + 1
+    setCharacter((prev) => prev ? { ...prev, [field]: next } : prev)
+    await supabase.from('characters').update({ [field]: next }).eq('id', params.id)
+  }
+
+  async function resetDeathSaves() {
+    setCharacter((prev) => prev ? { ...prev, death_save_successes: 0, death_save_failures: 0 } : prev)
+    await supabase.from('characters').update({ death_save_successes: 0, death_save_failures: 0 }).eq('id', params.id)
+  }
+
+  async function toggleCondition(conditionId: string, name: string, description: string) {
+    const isActive = charConditions.some((c) => c.condition_id === conditionId)
+    if (isActive) {
+      setCharConditions((prev) => prev.filter((c) => c.condition_id !== conditionId))
+      await supabase.from('character_conditions').delete().eq('character_id', params.id).eq('condition_id', conditionId)
+    } else {
+      setCharConditions((prev) => [...prev, { condition_id: conditionId, conditions: { name, description } }])
+      await supabase.from('character_conditions').insert({ character_id: params.id, condition_id: conditionId })
+    }
+  }
+
+  function openRoleplay() {
+    setRoleplayDraft({
+      personality_traits: character?.personality_traits ?? '',
+      ideals: character?.ideals ?? '',
+      bonds: character?.bonds ?? '',
+      flaws: character?.flaws ?? '',
+      backstory: character?.backstory ?? '',
+      appearance: character?.appearance ?? '',
+    })
+    setRoleplayModalOpen(true)
+  }
+
+  async function saveRoleplay() {
+    setCharacter((prev) => prev ? { ...prev, ...roleplayDraft } : prev)
+    await supabase.from('characters').update(roleplayDraft).eq('id', params.id)
+    setRoleplayModalOpen(false)
   }
 
   function toggleContainer(rowId: string) {
@@ -274,6 +358,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const totalUnitsCarried = topLevelInventory.filter((r) => !r.equipped).reduce((sum, r) => sum + (r.items?.weight_units ?? 1) * r.quantity, 0)
   const containerUnitsUsed = (containerId: string) => containedInventory(containerId).reduce((sum, r) => sum + (r.items?.weight_units ?? 1) * r.quantity, 0)
   const availableContainers = topLevelInventory.filter((r) => r.items?.is_container)
+  const equippedWeapons = inventory.filter((r) => r.equipped && r.items?.category === 'weapon')
   const cantrips = charSpells.filter((s) => s.spells.level === 0)
   const knownSpells = charSpells.filter((s) => s.spells.level > 0)
   const classFeat = charFeats.find((f) => f.source === 'class_feature_l1')
@@ -283,6 +368,40 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     ...(character.species_subrace?.traits ?? []),
   ]
   const subclassL1Features = character.subclass?.features?.filter((f) => f.level === 1) ?? []
+
+  // Bonus for any skill = ability modifier + proficiency bonus (doubled with Expertise).
+  // Used by the ability-grouped skill list and the passive-score calculations below.
+  function skillBonus(skillName: string): number {
+    const ability = SKILL_ABILITY[skillName]
+    const abMod = Math.floor((character![ability] - 10) / 2)
+    const skillRow = skills.find((s) => s.skill_name === skillName)
+    if (!skillRow) return abMod
+    return abMod + (skillRow.expertise ? PROF_BONUS * 2 : PROF_BONUS)
+  }
+
+  // Attack bonus and damage for an equipped weapon: finesse weapons use whichever of
+  // Strength/Dexterity is better, ranged weapons use Dexterity, everything else uses Strength.
+  function weaponAttackBonus(row: InventoryRow): number {
+    const props = row.items?.properties ?? {}
+    const strMod = Math.floor((character!.strength - 10) / 2)
+    const dexMod = Math.floor((character!.dexterity - 10) / 2)
+    const finesse = props.finesse === true
+    const isRanged = row.items?.weapon_range === 'ranged'
+    const abilityMod = finesse ? Math.max(strMod, dexMod) : (isRanged ? dexMod : strMod)
+    return PROF_BONUS + abilityMod
+  }
+  function weaponDamage(row: InventoryRow): { dice: string; type: string; bonus: number } {
+    const props = row.items?.properties ?? {}
+    const raw = props.damage as string | undefined
+    if (!raw) return { dice: '—', type: '', bonus: 0 }
+    const [dice, ...typeParts] = raw.split(' ')
+    const strMod = Math.floor((character!.strength - 10) / 2)
+    const dexMod = Math.floor((character!.dexterity - 10) / 2)
+    const finesse = props.finesse === true
+    const isRanged = row.items?.weapon_range === 'ranged'
+    const bonus = finesse ? Math.max(strMod, dexMod) : (isRanged ? dexMod : strMod)
+    return { dice, type: typeParts.join(' '), bonus }
+  }
 
   // AC used to be a single number baked in at character creation and never touched again —
   // equipping/unequipping armor on the sheet had no effect on it at all. Now it's recomputed
@@ -313,6 +432,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const spellSaveDC = spellcastingAbility ? 8 + 2 + Math.floor((character[spellcastingAbility] - 10) / 2) : null
 
   return (
+    <>
     <main className="min-h-screen px-6 py-8 max-w-6xl mx-auto">
       <div className="flex items-baseline justify-between mb-6 border-b border-mist pb-4">
         <div>
@@ -323,15 +443,64 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </p>
         </div>
         {character.inspiration && <span className="wax-seal text-xs px-3 py-1 rounded-full font-utility">Inspired</span>}
-        {(spellSlots.length > 0 || resources.length > 0) && (
-          <div className="flex gap-2">
-            <button onClick={shortRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Short Rest</button>
-            <button onClick={longRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Long Rest</button>
-          </div>
-        )}
+        <div className="flex gap-2">
+          <button onClick={() => setStatusModalOpen(true)} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Status Effects</button>
+          <button onClick={openRoleplay} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Backstory</button>
+          {(spellSlots.length > 0 || resources.length > 0) && (
+            <>
+              <button onClick={shortRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Short Rest</button>
+              <button onClick={longRest} className="text-xs border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Long Rest</button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-12 gap-4">
+        <section className="col-span-4 space-y-4">
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Abilities</h2>
+            {ABILITIES.map((ab) => {
+              const speciesBonus = character.species_asi?.[ab]
+              const label = ab.charAt(0).toUpperCase() + ab.slice(1)
+              const classProficient = character.class?.saving_throw_proficiencies?.includes(label) ?? false
+              const resilientProficient = character.resilient_ability === ab
+              const saveProficient = classProficient || resilientProficient
+              const abMod = Math.floor((character[ab] - 10) / 2)
+              const saveBonus = abMod + (saveProficient ? PROF_BONUS : 0)
+              const relatedSkills = ALL_SKILLS.filter((s) => SKILL_ABILITY[s] === ab)
+              return (
+                <div key={ab} className="mb-3.5 pb-3.5 border-b border-mist/40 last:border-0 last:pb-0 last:mb-0">
+                  <div className="flex justify-between items-baseline mb-1.5">
+                    <span className="font-display text-sm capitalize text-parchment">
+                      {label}{speciesBonus ? <span className="text-candle text-xs"> (+{speciesBonus})</span> : ''}
+                    </span>
+                    <span className="text-sm">{character[ab]} ({modifier(character[ab])})</span>
+                  </div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>
+                      Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}
+                    </span>
+                    <span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>{saveBonus >= 0 ? `+${saveBonus}` : saveBonus}</span>
+                  </div>
+                  {relatedSkills.map((skillName) => {
+                    const skillRow = skills.find((s) => s.skill_name === skillName)
+                    const proficient = !!skillRow
+                    const bonus = skillBonus(skillName)
+                    return (
+                      <div key={skillName} className="flex justify-between text-xs pl-3 mb-0.5">
+                        <span className={proficient ? 'text-candle' : 'text-parchment/50'}>
+                          {skillName}{skillRow?.expertise ? ' *' : ''}
+                        </span>
+                        <span className={proficient ? 'text-candle' : 'text-parchment/50'}>{bonus >= 0 ? `+${bonus}` : bonus}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
         <section className="col-span-3 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Vitals</h2>
@@ -340,43 +509,78 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             {spellSaveDC != null && <Row label="Spell Save DC" value={String(spellSaveDC)} />}
             <Row label="Initiative" value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)} />
             <Row label="Speed" value={`${character.speed} ft`} />
+            <Row label="Proficiency Bonus" value={`+${PROF_BONUS}`} />
             <Row
               label={<Tooltip label="Exhaustion" title="Exhaustion" body="2014 rules: a TIERED effects table, not a flat penalty. 1 disadvantage on ability checks, 2 speed halved, 3 disadvantage on attacks/saves, 4 HP max halved, 5 speed 0, 6 death." />}
               value={`${character.exhaustion_level} / 6`}
             />
+            <div className="grid grid-cols-3 gap-1 mt-3 pt-3 border-t border-mist/40 text-center">
+              <div>
+                <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Perception</div>
+                <div className="text-candle text-sm">{10 + skillBonus('Perception')}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Investigation</div>
+                <div className="text-candle text-sm">{10 + skillBonus('Investigation')}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-parchment/40 uppercase tracking-wide">Insight</div>
+                <div className="text-candle text-sm">{10 + skillBonus('Insight')}</div>
+              </div>
+            </div>
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Ability Scores</h2>
-            {ABILITIES.map((ab) => {
-              const bonus = character.species_asi?.[ab]
-              return (
-                <div key={ab} className="flex justify-between text-sm capitalize mb-1">
-                  <span>{ab.slice(0, 3).toUpperCase()}{bonus ? <span className="text-candle text-xs"> (+{bonus} species)</span> : ''}</span>
-                  <span>{character[ab]} ({modifier(character[ab])})</span>
-                </div>
-              )
-            })}
+            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm">Successes</span>
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <button key={i} onClick={() => setDeathSave('success', i)}
+                    className={`w-4 h-4 rounded-full border transition-colors ${character.death_save_successes > i ? 'bg-candle border-candle' : 'border-mist hover:border-candle/50'}`} />
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm">Failures</span>
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <button key={i} onClick={() => setDeathSave('failure', i)}
+                    className={`w-4 h-4 rounded-full border transition-colors ${character.death_save_failures > i ? 'bg-blood-bright border-blood-bright' : 'border-mist hover:border-candle/50'}`} />
+                ))}
+              </div>
+            </div>
+            {(character.death_save_successes > 0 || character.death_save_failures > 0) && (
+              <button onClick={resetDeathSaves} className="text-xs text-candle hover:text-parchment mb-2">Reset</button>
+            )}
+            <div className="flex justify-between items-center text-sm pt-2 border-t border-mist/40">
+              <span>Hit Dice</span>
+              <div className="flex items-center gap-2">
+                <button onClick={spendHitDie} disabled={character.hit_dice_remaining <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-xs">−</button>
+                <span>{character.hit_dice_remaining} / {character.hit_dice_total} (d{character.class?.hit_die ?? 8})</span>
+              </div>
+            </div>
           </div>
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Saving Throws</h2>
-            {ABILITIES.map((ab) => {
-              const label = ab.charAt(0).toUpperCase() + ab.slice(1)
-              const classProficient = character.class?.saving_throw_proficiencies?.includes(label) ?? false
-              const resilientProficient = character.resilient_ability === ab
-              const proficient = classProficient || resilientProficient
-              // Proficiency bonus is +2 at level 1 — hardcoded here since leveling isn't built
-              // yet; this will need to become level-derived once it is.
-              const bonus = modifier(character[ab] as number).replace('+', '')
-              const total = Number(bonus) + (proficient ? 2 : 0)
-              return (
-                <div key={ab} className="flex justify-between text-sm mb-1">
-                  <span>{label}{resilientProficient && !classProficient ? <span className="text-candle text-xs"> (Resilient)</span> : ''}</span>
-                  <span className={proficient ? 'text-candle' : ''}>{total >= 0 ? `+${total}` : total}</span>
-                </div>
-              )
-            })}
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-display text-sm text-candle uppercase tracking-wide">Status Effects</h2>
+              <button onClick={() => setStatusModalOpen(true)} className="text-xs text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">Manage</button>
+            </div>
+            {charConditions.length === 0 ? (
+              <p className="text-xs text-parchment/40 italic">None currently applied.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {charConditions.map((c) => (
+                  <Tooltip
+                    key={c.condition_id}
+                    label={<span className="wax-seal text-xs px-2 py-1 rounded-full inline-block">{c.conditions.name}</span>}
+                    title={c.conditions.name}
+                    body={c.conditions.description}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
@@ -403,12 +607,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </section>
 
-        <section className="col-span-4 space-y-4">
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Skills</h2>
-            {skills.length ? skills.map((s) => <Row key={s.skill_name} label={s.skill_name} value="proficient" dim />) : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
-          </div>
-
+        <section className="col-span-2 space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
             {character.background?.feature_name ? (
@@ -472,17 +671,54 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           )}
 
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Conditions</h2>
-            <p className="text-xs text-parchment/40 italic">None currently applied.</p>
-          </div>
-
-          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Currency</h2>
             {currency ? <p className="text-sm">{currency.gp} gp{currency.sp ? `, ${currency.sp} sp` : ''}{currency.cp ? `, ${currency.cp} cp` : ''}</p> : <p className="text-xs text-parchment/40 italic">None recorded.</p>}
           </div>
         </section>
 
-        <section className="col-span-5 space-y-4">
+        <section className="col-span-3 space-y-4">
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
+            {equippedWeapons.length === 0 ? (
+              <p className="text-xs text-parchment/40 italic">No weapons equipped.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[10px] text-parchment/40 uppercase tracking-wide text-left">
+                    <th className="font-normal pb-1">Name</th>
+                    <th className="font-normal pb-1">Bonus</th>
+                    <th className="font-normal pb-1">Damage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {equippedWeapons.map((row) => {
+                    const bonus = weaponAttackBonus(row)
+                    const dmg = weaponDamage(row)
+                    return (
+                      <tr key={row.id}>
+                        <td className="py-1 pr-2">{row.items?.name}</td>
+                        <td className="py-1 pr-2">{bonus >= 0 ? `+${bonus}` : bonus}</td>
+                        <td className="py-1 text-parchment/70">
+                          {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+            {spellcastingAbility && (
+              <p className="text-xs text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+                Spell Attack: {(() => {
+                  const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2)
+                  return b >= 0 ? `+${b}` : b
+                })()} · Spell Save DC: {spellSaveDC}
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section className="col-span-12 grid grid-cols-2 gap-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-sm text-candle mb-3 uppercase tracking-wide">Spells</h2>
             {spellSlots.length > 0 && (
@@ -610,6 +846,56 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         </section>
       </div>
     </main>
+
+    <Modal open={statusModalOpen} onClose={() => setStatusModalOpen(false)} title="Status Effects">
+      <p className="text-xs text-parchment/50 mb-4">Toggle any conditions currently affecting {character.name}. They'll show as pills on the sheet with their full rules text on hover.</p>
+      <div className="grid grid-cols-2 gap-2">
+        {conditionsList.map((c) => {
+          const active = charConditions.some((cc) => cc.condition_id === c.id)
+          return (
+            <button
+              key={c.id}
+              onClick={() => toggleCondition(c.id, c.name, c.description)}
+              className={`text-left px-3 py-2 rounded-sm border text-sm transition-colors ${active ? 'border-candle bg-blood/25 text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+            >
+              <div className="flex justify-between items-center mb-0.5">
+                <span>{c.name}</span>
+                <span className="text-xs">{active ? 'ON' : 'OFF'}</span>
+              </div>
+              <p className="text-xs text-parchment/50 leading-snug">{c.description}</p>
+            </button>
+          )
+        })}
+      </div>
+    </Modal>
+
+    <Modal open={roleplayModalOpen} onClose={() => setRoleplayModalOpen(false)} title="Backstory & Roleplay">
+      <div className="space-y-3">
+        {([
+          ['personality_traits', 'Personality Traits'],
+          ['ideals', 'Ideals'],
+          ['bonds', 'Bonds'],
+          ['flaws', 'Flaws'],
+          ['appearance', 'Appearance'],
+          ['backstory', 'Backstory'],
+        ] as const).map(([key, label]) => (
+          <div key={key}>
+            <label className="text-xs text-candle uppercase tracking-wide">{label}</label>
+            <textarea
+              value={roleplayDraft[key]}
+              onChange={(e) => setRoleplayDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+              rows={key === 'backstory' ? 6 : 2}
+              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1 text-parchment focus:border-candle/50 outline-none"
+            />
+          </div>
+        ))}
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={() => setRoleplayModalOpen(false)} className="text-xs text-parchment/60 hover:text-parchment px-3 py-1.5">Cancel</button>
+          <button onClick={saveRoleplay} className="text-xs bg-blood hover:bg-blood-bright transition rounded-sm px-3 py-1.5">Save</button>
+        </div>
+      </div>
+    </Modal>
+    </>
   )
 }
 
