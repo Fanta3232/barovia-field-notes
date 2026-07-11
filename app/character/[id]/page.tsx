@@ -1089,6 +1089,91 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             )}
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="panel rounded-sm p-4">
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
+              <table className="w-full text-base">
+                <thead>
+                  <tr className="text-xs text-parchment/40 uppercase tracking-wide text-left">
+                    <th className="font-normal pb-1">Name</th>
+                    <th className="font-normal pb-1">
+                      <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better. Click to roll it." />
+                    </th>
+                    <th className="font-normal pb-1">
+                      <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in. Click to roll it — if your last attack roll for that weapon was a natural 20, damage automatically doubles." />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                    <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
+                    <td
+                      onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
+                      className="py-1 pr-2 text-parchment/70 cursor-pointer hover:text-candle transition-colors"
+                    >
+                      {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                    </td>
+                    <td
+                      onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
+                      className="py-1 text-parchment/50 cursor-pointer hover:text-candle transition-colors"
+                    >
+                      1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
+                    </td>
+                  </tr>
+                  {equippedWeapons.map((row) => {
+                    const bonus = weaponAttackBonus(row)
+                    const dmg = weaponDamage(row)
+                    const name = row.items?.name ?? 'Weapon'
+                    return (
+                      <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
+                        <td className="py-1 pr-2">{name}</td>
+                        <td onClick={() => rollAttack(row.id, name, bonus)} className="py-1 pr-2 cursor-pointer hover:text-candle transition-colors">
+                          {bonus >= 0 ? `+${bonus}` : bonus}
+                        </td>
+                        <td onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="py-1 text-parchment/70 cursor-pointer hover:text-candle transition-colors">
+                          {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
+                          {lastCrit[row.id] && <span className="text-blood-bright"> (crit ready)</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {spellcastingAbility && (
+                <div className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
+                  <span
+                    onClick={() => rollCheck(`${character.class?.name} Spell Attack`, PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2))}
+                    className="cursor-pointer hover:text-candle transition-colors"
+                  >
+                    <Tooltip
+                      label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
+                      title="Spell Attack Bonus"
+                      body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead. Click to roll it."
+                    />
+                  </span>
+                  {' · '}
+                  <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
+                </div>
+              )}
+            </div>
+
+            <div className="panel rounded-sm p-4">
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
+              {rollLog.length === 0 ? (
+                <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                  {rollLog.map((entry, i) => (
+                    <div key={i} className="text-sm flex gap-2">
+                      <span className="text-parchment/30 shrink-0">{entry.time}</span>
+                      <span className="text-parchment/70">{entry.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="md:col-span-4 space-y-4">
@@ -1212,91 +1297,6 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               rows={5}
               className="w-full bg-ink border border-mist rounded-sm p-2 text-sm text-parchment focus:border-candle/50 outline-none placeholder:text-parchment/30"
             />
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 md:col-start-5 md:col-span-8 md:grid-cols-2 gap-4">
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
-            <table className="w-full text-base">
-              <thead>
-                <tr className="text-xs text-parchment/40 uppercase tracking-wide text-left">
-                  <th className="font-normal pb-1">Name</th>
-                  <th className="font-normal pb-1">
-                    <Tooltip label="Bonus" title="Attack Bonus" body="Add this to a d20 roll to see if the attack hits. Melee uses Strength, ranged uses Dexterity, and finesse weapons let you pick whichever is better. Click to roll it." />
-                  </th>
-                  <th className="font-normal pb-1">
-                    <Tooltip label="Damage" title="Damage" body="Roll this when the attack hits. The number after the dice is your relevant ability modifier, already added in. Click to roll it — if your last attack roll for that weapon was a natural 20, damage automatically doubles." />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                  <td className="py-1 pr-2 text-parchment/70">Unarmed Strike</td>
-                  <td
-                    onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
-                    className="py-1 pr-2 text-parchment/70 cursor-pointer hover:text-candle transition-colors"
-                  >
-                    {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
-                  </td>
-                  <td
-                    onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
-                    className="py-1 text-parchment/50 cursor-pointer hover:text-candle transition-colors"
-                  >
-                    1{(() => { const m = Math.floor((character.strength - 10) / 2); return m !== 0 ? (m > 0 ? `+${m}` : m) : '' })()} bludgeoning
-                  </td>
-                </tr>
-                {equippedWeapons.map((row) => {
-                  const bonus = weaponAttackBonus(row)
-                  const dmg = weaponDamage(row)
-                  const name = row.items?.name ?? 'Weapon'
-                  return (
-                    <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                      <td className="py-1 pr-2">{name}</td>
-                      <td onClick={() => rollAttack(row.id, name, bonus)} className="py-1 pr-2 cursor-pointer hover:text-candle transition-colors">
-                        {bonus >= 0 ? `+${bonus}` : bonus}
-                      </td>
-                      <td onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="py-1 text-parchment/70 cursor-pointer hover:text-candle transition-colors">
-                        {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
-                        {lastCrit[row.id] && <span className="text-blood-bright"> (crit ready)</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            {spellcastingAbility && (
-              <div className="text-sm text-parchment/50 mt-3 pt-3 border-t border-mist/40">
-                <span
-                  onClick={() => rollCheck(`${character.class?.name} Spell Attack`, PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2))}
-                  className="cursor-pointer hover:text-candle transition-colors"
-                >
-                  <Tooltip
-                    label={<span>Spell Attack: {(() => { const b = PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2); return b >= 0 ? `+${b}` : b })()}</span>}
-                    title="Spell Attack Bonus"
-                    body="Added to a d20 roll for spells that require an attack roll to hit, like Fire Bolt or Guiding Bolt — as opposed to spells that force a saving throw instead. Click to roll it."
-                  />
-                </span>
-                {' · '}
-                <Tooltip label={<span>Spell Save DC: {spellSaveDC}</span>} title="Spell Save DC" body="The number a creature must meet or beat on its own saving throw to resist your spell." />
-              </div>
-            )}
-          </div>
-
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
-            {rollLog.length === 0 ? (
-              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
-            ) : (
-              <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                {rollLog.map((entry, i) => (
-                  <div key={i} className="text-sm flex gap-2">
-                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
-                    <span className="text-parchment/70">{entry.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </section>
 
