@@ -94,6 +94,40 @@ const NEW_INVOCATIONS_AT_LEVEL: Record<number, number> = { 2: 2, 5: 1, 7: 1, 9: 
 // Sorcerer's Metamagic — 2 options at 3rd level, one more at 10th and 17th.
 const NEW_METAMAGIC_AT_LEVEL: Record<number, number> = { 3: 2, 10: 1, 17: 1 }
 
+// Class resource pools that actually grow with level (Rage uses, Ki points, Sorcery points,
+// Channel Divinity charges, etc.) — these were being created at character creation but never
+// updated on level-up. Names match the create wizard's resourceMap exactly so the same rows
+// get updated rather than duplicated. Deliberately excludes Second Wind (always 1 use) and
+// Wild Shape's use count (always 2 — only the beast options scale, not the count).
+function resourcesForLevel(className: string | undefined, level: number): { name: string; max: number; recharge: 'short_rest' | 'long_rest' }[] {
+  switch (className) {
+    case 'Barbarian': {
+      const rages = level >= 20 ? 99 : level >= 17 ? 6 : level >= 12 ? 5 : level >= 6 ? 4 : level >= 3 ? 3 : 2
+      return [{ name: 'Rage', max: rages, recharge: 'long_rest' }]
+    }
+    case 'Paladin':
+      return [{ name: 'Lay on Hands Pool', max: level * 5, recharge: 'long_rest' }]
+    case 'Monk':
+      return level >= 2 ? [{ name: 'Ki Points', max: level, recharge: 'short_rest' }] : []
+    case 'Sorcerer':
+      return level >= 2 ? [{ name: 'Sorcery Points', max: level, recharge: 'long_rest' }] : []
+    case 'Cleric': {
+      const uses = level >= 18 ? 3 : level >= 6 ? 2 : level >= 2 ? 1 : 0
+      return uses > 0 ? [{ name: 'Channel Divinity', max: uses, recharge: 'short_rest' }] : []
+    }
+    case 'Fighter': {
+      const out: { name: string; max: number; recharge: 'short_rest' | 'long_rest' }[] = []
+      if (level >= 2) out.push({ name: 'Action Surge', max: level >= 17 ? 2 : 1, recharge: 'short_rest' })
+      if (level >= 9) out.push({ name: 'Indomitable', max: level >= 17 ? 3 : level >= 13 ? 2 : 1, recharge: 'long_rest' })
+      return out
+    }
+    case 'Druid':
+      return level >= 2 ? [{ name: 'Wild Shape', max: 2, recharge: 'short_rest' }] : []
+    default:
+      return []
+  }
+}
+
 function spellSlotsForLevel(spellcastingType: string | null, startsAt: number, level: number): number[] | null {
   if (!spellcastingType) return null
   if (spellcastingType === 'pact') return null // handled separately via PACT_MAGIC
@@ -351,6 +385,26 @@ export default function LevelUpWizard({
       }
     }
 
+    // Class resource pools that grow with level (Rage, Ki Points, Sorcery Points, Channel
+    // Divinity, Lay on Hands, Action Surge, Indomitable, Wild Shape). These existed at creation
+    // but were never updated on level-up — new pools appear here the moment they're unlocked,
+    // existing ones just get their max_value bumped.
+    const newResources = resourcesForLevel(character.class?.name, newLevel)
+    if (newResources.length > 0) {
+      const existingRes = await supabase.from('character_resources').select('name, current_value').eq('character_id', characterId)
+      const existingByName = new Map((existingRes.data ?? []).map((r) => [r.name, r.current_value]))
+      for (const r of newResources) {
+        if (existingByName.has(r.name)) {
+          // Uses remaining carry over as-is (a level-up doesn't refill a pool you'd already
+          // dipped into this session) — Math.min is just a defensive cap, since max only grows.
+          const remaining = existingByName.get(r.name) as number
+          tasks.push(supabase.from('character_resources').update({ max_value: r.max, current_value: Math.min(remaining, r.max) }).eq('character_id', characterId).eq('name', r.name))
+        } else {
+          tasks.push(supabase.from('character_resources').insert({ character_id: characterId, name: r.name, max_value: r.max, current_value: r.max, recharge: r.recharge }))
+        }
+      }
+    }
+
     await Promise.all(tasks)
     setSaving(false)
     onComplete()
@@ -587,6 +641,9 @@ export default function LevelUpWizard({
               <ul className="text-sm text-parchment/80 space-y-1 mb-2">
                 <li>Level {character.level} → {newLevel}</li>
                 <li>HP: {character.max_hp} → {character.max_hp + hpGainFloor} (+{hpGainFloor})</li>
+                {resourcesForLevel(character.class?.name, newLevel).map((r) => (
+                  <li key={r.name}>{r.name}: {r.max} max</li>
+                ))}
                 {newFeatures.length > 0 && <li>New features: {newFeatures.map((f) => f.name).join(', ')}</li>}
                 {chosenFightingStyleId && <li>Fighting Style: {fightingStyleOptions.find((f) => f.id === chosenFightingStyleId)?.name}</li>}
                 {chosenInvocationIds.length > 0 && <li>Eldritch Invocations: {chosenInvocationIds.map((id) => invocationOptions.find((f) => f.id === id)?.name).join(', ')}</li>}
