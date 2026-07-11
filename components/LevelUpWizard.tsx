@@ -32,6 +32,9 @@ type WizardCharacter = {
     spellcasting_starts_at_level: number
     subclass_starts_at_level: number
   } | null
+  subclassName: string | null
+  subraceName: string | null
+  hasToughFeat: boolean
 }
 
 type ClassFeature = { name: string; description: string }
@@ -257,7 +260,14 @@ export default function LevelUpWizard({
 
   if (!open) return null
 
-  const hpGain = (hpMethod === 'roll' ? (rolledHp ?? 0) : hpMethod === 'average' ? averageRoll : 0) + conMod
+  // Same +1/level (Hill Dwarf, Draconic Bloodline) and +2/level (Tough feat) HP sources the
+  // character creation flow already applies at level 1 — kept consistent here so they don't
+  // silently stop accruing the moment a character starts leveling up.
+  const perLevelHpBonus =
+    (character.subraceName === 'Hill Dwarf' ? 1 : 0) +
+    (character.subclassName === 'Draconic Bloodline' ? 1 : 0) +
+    (character.hasToughFeat ? 2 : 0)
+  const hpGain = (hpMethod === 'roll' ? (rolledHp ?? 0) : hpMethod === 'average' ? averageRoll : 0) + conMod + perLevelHpBonus
   const hpGainFloor = Math.max(1, hpGain) // HP gained on level-up is always at least 1
 
   function toggleAsiPick(ability: string) {
@@ -322,6 +332,12 @@ export default function LevelUpWizard({
         const bump = asiMode === 'one' ? 2 : 1
         abilityUpdates[ability] = Math.min(20, current + bump)
       }
+    }
+    // Primal Champion (Barbarian, 20th level): Strength and Constitution increase by 4, to a
+    // maximum of 24 — a genuine exception to the usual ability score cap of 20.
+    if (character.class?.name === 'Barbarian' && newLevel === 20) {
+      abilityUpdates.strength = Math.min(24, (abilityUpdates.strength ?? character.strength) + 4)
+      abilityUpdates.constitution = Math.min(24, (abilityUpdates.constitution ?? character.constitution) + 4)
     }
 
     const characterUpdate: Record<string, unknown> = {
@@ -427,19 +443,20 @@ export default function LevelUpWizard({
               <h3 className="font-display text-base text-candle mb-2">Hit Points</h3>
               <p className="text-sm text-parchment/70 mb-3">
                 Your Hit Die is a d{hitDie}. Roll it, or take the average ({averageRoll}) — either way, add your Constitution modifier ({conMod >= 0 ? `+${conMod}` : conMod}), minimum 1 total.
+                {perLevelHpBonus > 0 && ` Plus +${perLevelHpBonus} from ${[character.subraceName === 'Hill Dwarf' && 'Dwarven Toughness', character.subclassName === 'Draconic Bloodline' && 'Draconic Resilience', character.hasToughFeat && 'the Tough feat'].filter(Boolean).join(' and ')}.`}
               </p>
               <div className="flex gap-3 mb-3">
                 <button
                   onClick={() => setHpMethod('average')}
                   className={`flex-1 border rounded-sm py-2 text-sm transition-colors ${hpMethod === 'average' ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
                 >
-                  Take Average ({averageRoll} + {conMod >= 0 ? `+${conMod}` : conMod} = {Math.max(1, averageRoll + conMod)})
+                  Take Average ({averageRoll} + {conMod >= 0 ? `+${conMod}` : conMod}{perLevelHpBonus > 0 ? ` + ${perLevelHpBonus}` : ''} = {Math.max(1, averageRoll + conMod + perLevelHpBonus)})
                 </button>
                 <button
                   onClick={() => { setHpMethod('roll'); setRolledHp(1 + Math.floor(Math.random() * hitDie)) }}
                   className={`flex-1 border rounded-sm py-2 text-sm transition-colors ${hpMethod === 'roll' ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
                 >
-                  Roll d{hitDie}{rolledHp !== null ? ` → ${rolledHp} + ${conMod >= 0 ? `+${conMod}` : conMod} = ${Math.max(1, rolledHp + conMod)}` : ''}
+                  Roll d{hitDie}{rolledHp !== null ? ` → ${rolledHp} + ${conMod >= 0 ? `+${conMod}` : conMod}${perLevelHpBonus > 0 ? ` + ${perLevelHpBonus}` : ''} = ${Math.max(1, rolledHp + conMod + perLevelHpBonus)}` : ''}
                 </button>
               </div>
               {hpMethod === 'roll' && (
@@ -652,6 +669,7 @@ export default function LevelUpWizard({
                 {chosenSubclassId && <li>Subclass: {subclassOptions.find((s) => s.id === chosenSubclassId)?.name}</li>}
                 {asiChoice === 'asi' && <li>Ability increase: {asiPicks.map((a) => ABILITY_LABELS[a]).join(', ')}</li>}
                 {asiChoice === 'feat' && <li>Feat: {availableFeats.find((f) => f.id === chosenFeatId)?.name}</li>}
+                {character.class?.name === 'Barbarian' && newLevel === 20 && <li>Primal Champion: Strength and Constitution +4 (max 24)</li>}
               </ul>
               <button
                 onClick={commit}

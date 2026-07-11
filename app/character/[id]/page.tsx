@@ -596,12 +596,15 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
   // Bonus for any skill = ability modifier + proficiency bonus (doubled with Expertise).
   // Used by the ability-grouped skill list and the passive-score calculations below.
+  // Jack of All Trades (Bard, level 2+) adds half proficiency bonus to skills you aren't
+  // otherwise proficient in — a real number change that was previously missing entirely.
   function skillBonus(skillName: string): number {
     const ability = SKILL_ABILITY[skillName]
     const abMod = Math.floor((character![ability] - 10) / 2)
     const skillRow = skills.find((s) => s.skill_name === skillName)
-    if (!skillRow) return abMod
-    return abMod + (skillRow.expertise ? PROF_BONUS * 2 : PROF_BONUS)
+    if (skillRow) return abMod + (skillRow.expertise ? PROF_BONUS * 2 : PROF_BONUS)
+    const hasJackOfAllTrades = classFeatures.some((f) => f.name === 'Jack of All Trades')
+    return abMod + (hasJackOfAllTrades ? Math.floor(PROF_BONUS / 2) : 0)
   }
 
   // Whether the character's class is actually trained with this weapon — either the weapon's
@@ -975,7 +978,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               const label = ab.charAt(0).toUpperCase() + ab.slice(1)
               const classProficient = character.class?.saving_throw_proficiencies?.includes(label) ?? false
               const resilientProficient = character.resilient_ability === ab
-              const saveProficient = classProficient || resilientProficient
+              // Diamond Soul (Monk 14+) grants proficiency in every save; Slippery Mind (Rogue
+              // 15+) grants Wisdom specifically — both are real number changes, not just flavor.
+              const hasDiamondSoul = classFeatures.some((f) => f.name === 'Diamond Soul')
+              const hasSlipperyMind = classFeatures.some((f) => f.name === 'Slippery Mind')
+              const bonusFeatureProficient = hasDiamondSoul || (hasSlipperyMind && ab === 'wisdom')
+              const saveProficient = classProficient || resilientProficient || bonusFeatureProficient
               const abMod = Math.floor((character[ab] - 10) / 2)
               const saveBonus = abMod + (saveProficient ? PROF_BONUS : 0)
               const relatedSkills = ALL_SKILLS.filter((s) => SKILL_ABILITY[s] === ab)
@@ -997,7 +1005,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     className="flex justify-between text-sm mb-1.5 cursor-pointer hover:bg-mist/10 transition-colors -mx-1 px-1 rounded-sm py-0.5"
                   >
                     <Tooltip
-                      label={<span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}</span>}
+                      label={<span className={saveProficient ? 'text-candle' : 'text-parchment/60'}>Save{resilientProficient && !classProficient ? ' (Resilient)' : ''}{hasDiamondSoul && !classProficient && !resilientProficient ? ' (Diamond Soul)' : ''}{hasSlipperyMind && ab === 'wisdom' && !classProficient && !resilientProficient && !hasDiamondSoul ? ' (Slippery Mind)' : ''}</span>}
                       title={`${label} Saving Throw`}
                       body="Rolled to resist an effect trying to happen to you — like being knocked prone, thrown from a cliff, or gripped by a spell. Different abilities cover different kinds of resistance. Click anywhere on this row to roll it."
                     />
@@ -1392,18 +1400,35 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
             <p className="text-xs text-parchment/40 uppercase tracking-wide mb-1.5">Saving Throws</p>
             <div className="flex flex-wrap gap-1.5">
-              {(character.class?.saving_throw_proficiencies?.length ?? 0) === 0 ? (
-                <span className="text-sm text-parchment/40 italic">None</span>
-              ) : (
-                character.class!.saving_throw_proficiencies!.map((s) => (
-                  <Tooltip
-                    key={s}
-                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{s}</span>}
-                    title={`${s} Saving Throw Proficiency`}
-                    body="Add your proficiency bonus whenever you make this kind of saving throw — already factored into the Abilities panel above."
-                  />
-                ))
-              )}
+              {(() => {
+                const base = character.class?.saving_throw_proficiencies ?? []
+                const bonusSaves: string[] = []
+                if (character.resilient_ability) {
+                  const label = character.resilient_ability.charAt(0).toUpperCase() + character.resilient_ability.slice(1)
+                  if (!base.includes(label)) bonusSaves.push(label)
+                }
+                if (classFeatures.some((f) => f.name === 'Diamond Soul')) {
+                  ABILITIES.forEach((a) => {
+                    const label = a.charAt(0).toUpperCase() + a.slice(1)
+                    if (!base.includes(label) && !bonusSaves.includes(label)) bonusSaves.push(label)
+                  })
+                } else if (classFeatures.some((f) => f.name === 'Slippery Mind') && !base.includes('Wisdom') && !bonusSaves.includes('Wisdom')) {
+                  bonusSaves.push('Wisdom')
+                }
+                const allSaves = [...base, ...bonusSaves]
+                return allSaves.length === 0 ? (
+                  <span className="text-sm text-parchment/40 italic">None</span>
+                ) : (
+                  allSaves.map((s) => (
+                    <Tooltip
+                      key={s}
+                      label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{s}{bonusSaves.includes(s) ? ' *' : ''}</span>}
+                      title={`${s} Saving Throw Proficiency`}
+                      body={`Add your proficiency bonus whenever you make this kind of saving throw — already factored into the Abilities panel above.${bonusSaves.includes(s) ? ' Gained from a class feature, not your base class saves.' : ''}`}
+                    />
+                  ))
+                )
+              })()}
             </div>
           </div>
 
@@ -1681,7 +1706,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     {levelUpOpen && (
       <LevelUpWizard
         characterId={character.id}
-        character={character}
+        character={{
+          ...character,
+          subclassName: character.subclass?.name ?? null,
+          subraceName: character.species_subrace?.name ?? null,
+          hasToughFeat: charFeats.some((f) => f.feats.name === 'Tough'),
+        }}
         open={levelUpOpen}
         onClose={() => setLevelUpOpen(false)}
         onComplete={async () => { setLevelUpOpen(false); await loadCharacterData() }}
