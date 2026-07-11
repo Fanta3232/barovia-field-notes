@@ -16,6 +16,7 @@ type PartyMember = {
   dexterity: number
   constitution: number
   wisdom: number
+  pending_level_up: boolean
   class: { name: string } | null
   subclass: { name: string } | null
 }
@@ -169,7 +170,7 @@ export default function AdminPage() {
   useEffect(() => {
     async function load() {
       const [charsRes, invRes, condRes, itemsRes, notesRes, npcsRes, monstersRes] = await Promise.all([
-        supabase.from('characters').select('id, name, level, current_hp, max_hp, temp_hp, strength, dexterity, constitution, wisdom, class:class_id(name), subclass:subclass_id(name)').eq('is_quickstart_template', false).order('name'),
+        supabase.from('characters').select('id, name, level, current_hp, max_hp, temp_hp, strength, dexterity, constitution, wisdom, pending_level_up, class:class_id(name), subclass:subclass_id(name)').eq('is_quickstart_template', false).order('name'),
         supabase.from('character_inventory').select('character_id, items:item_id(category, properties)').eq('equipped', true),
         supabase.from('character_conditions').select('character_id, conditions:condition_id(name)'),
         supabase.from('items').select('id, name, category').order('name'),
@@ -223,7 +224,7 @@ export default function AdminPage() {
     const shieldBonus = shield ? (shield.items?.properties?.ac_bonus ?? 0) : 0
     if (!armor) {
       if (member.class?.name === 'Barbarian') return 10 + dexMod + Math.floor((member.constitution - 10) / 2) + shieldBonus
-      if (member.class?.name === 'Monk') return 10 + dexMod + Math.floor((member.wisdom - 10) / 2) + shieldBonus
+      if (member.class?.name === 'Monk' && !shield) return 10 + dexMod + Math.floor((member.wisdom - 10) / 2)
       if (member.subclass?.name === 'Draconic Bloodline') return 13 + dexMod + shieldBonus
       return 10 + dexMod + shieldBonus
     }
@@ -235,6 +236,13 @@ export default function AdminPage() {
 
   function conditionsFor(charId: string): string[] {
     return conditions.filter((c) => c.character_id === charId).map((c) => c.conditions?.name).filter((n): n is string => !!n)
+  }
+
+  async function grantLevelUp(memberId: string, e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    setParty((prev) => prev.map((p) => p.id === memberId ? { ...p, pending_level_up: true } : p))
+    await supabase.from('characters').update({ pending_level_up: true }).eq('id', memberId)
   }
 
   async function logActivity(characterId: string, action: string, detail: string) {
@@ -480,6 +488,15 @@ export default function AdminPage() {
                     {conds.map((c) => <span key={c} className="wax-seal text-xs px-2 py-0.5 rounded-full">{c}</span>)}
                   </div>
                 )}
+                <div className="mt-2 pt-2 border-t border-mist/30">
+                  {m.pending_level_up ? (
+                    <span className="text-xs text-candle italic">✦ Level up pending — waiting on player</span>
+                  ) : (
+                    <button onClick={(e) => grantLevelUp(m.id, e)} className="text-xs text-parchment/50 hover:text-candle border border-mist rounded-full px-2.5 py-1 hover:border-candle/50 transition-colors">
+                      Grant Level Up → {m.level + 1}
+                    </button>
+                  )}
+                </div>
               </Link>
             )
           })}

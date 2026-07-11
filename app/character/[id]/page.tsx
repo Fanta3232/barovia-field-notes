@@ -675,7 +675,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
     if (!equippedArmor) {
       if (character!.class?.name === 'Barbarian') return 10 + dexMod + Math.floor((character!.constitution - 10) / 2) + shieldBonus
-      if (character!.class?.name === 'Monk') return 10 + dexMod + Math.floor((character!.wisdom - 10) / 2) + shieldBonus
+      // Monk's Unarmored Defense requires wielding no shield at all (unlike Barbarian's, which
+      // explicitly allows one) — with a shield equipped, a Monk just gets 10 + Dex + the shield.
+      if (character!.class?.name === 'Monk' && !equippedShield) return 10 + dexMod + Math.floor((character!.wisdom - 10) / 2)
       if (character!.subclass?.name === 'Draconic Bloodline') return 13 + dexMod + shieldBonus
       return 10 + dexMod + shieldBonus
     }
@@ -686,10 +688,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   }
   const currentAC = computeCurrentAC()
 
-  // Spell Save DC — proficiency bonus is +2 at level 1 (see the Saving Throws panel note on
-  // why this is hardcoded for now). Only shown for actual casters.
+  // Spell Save DC — only shown for actual casters. Uses the level-derived PROF_BONUS above.
   const spellcastingAbility = character.class?.spellcasting_ability?.toLowerCase() as (typeof ABILITIES)[number] | undefined
-  const spellSaveDC = spellcastingAbility ? 8 + 2 + Math.floor((character[spellcastingAbility] - 10) / 2) : null
+  const spellSaveDC = spellcastingAbility ? 8 + PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2) : null
 
   // Flattened, display-ready list of weapon proficiencies — whole categories first (Simple/
   // Martial Weapons), then any individually named weapons (e.g. a Bard's Rapier, Longsword).

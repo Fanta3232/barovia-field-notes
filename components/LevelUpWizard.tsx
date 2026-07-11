@@ -269,6 +269,12 @@ export default function LevelUpWizard({
     (character.hasToughFeat ? 2 : 0)
   const hpGain = (hpMethod === 'roll' ? (rolledHp ?? 0) : hpMethod === 'average' ? averageRoll : 0) + conMod + perLevelHpBonus
   const hpGainFloor = Math.max(1, hpGain) // HP gained on level-up is always at least 1
+  // Preview of the retroactive Constitution HP rule for the confirm screen — mirrors the same
+  // calculation commit() performs once ability choices are locked in.
+  const previewNewConstitution = character.class?.name === 'Barbarian' && newLevel === 20
+    ? Math.min(24, (asiChoice === 'asi' && asiPicks.includes('constitution') ? character.constitution + (asiMode === 'one' ? 2 : 1) : character.constitution) + 4)
+    : asiChoice === 'asi' && asiPicks.includes('constitution') ? Math.min(20, character.constitution + (asiMode === 'one' ? 2 : 1)) : character.constitution
+  const previewRetroactiveConBonus = Math.max(0, Math.floor((previewNewConstitution - 10) / 2) - Math.floor((character.constitution - 10) / 2)) * newLevel
 
   function toggleAsiPick(ability: string) {
     setAsiPicks((prev) => {
@@ -323,8 +329,6 @@ export default function LevelUpWizard({
 
   async function commit() {
     setSaving(true)
-    const newMaxHp = character.max_hp + hpGainFloor
-    const newCurrentHp = character.current_hp + hpGainFloor
     const abilityUpdates: Record<string, number> = {}
     if (asiChoice === 'asi') {
       for (const ability of asiPicks) {
@@ -339,6 +343,17 @@ export default function LevelUpWizard({
       abilityUpdates.strength = Math.min(24, (abilityUpdates.strength ?? character.strength) + 4)
       abilityUpdates.constitution = Math.min(24, (abilityUpdates.constitution ?? character.constitution) + 4)
     }
+
+    // "When your Constitution modifier increases by 1, your hit point maximum increases by 1
+    // for each level you have attained" (PHB) — an easy rule to miss since it's retroactive
+    // across every level already gained, not just this one.
+    const oldConMod = Math.floor((character.constitution - 10) / 2)
+    const newConstitution = abilityUpdates.constitution ?? character.constitution
+    const newConMod = Math.floor((newConstitution - 10) / 2)
+    const retroactiveConBonus = Math.max(0, newConMod - oldConMod) * newLevel
+
+    const newMaxHp = character.max_hp + hpGainFloor + retroactiveConBonus
+    const newCurrentHp = character.current_hp + hpGainFloor + retroactiveConBonus
 
     const characterUpdate: Record<string, unknown> = {
       level: newLevel,
@@ -657,7 +672,7 @@ export default function LevelUpWizard({
               <h3 className="font-display text-base text-candle mb-2">Confirm</h3>
               <ul className="text-sm text-parchment/80 space-y-1 mb-2">
                 <li>Level {character.level} → {newLevel}</li>
-                <li>HP: {character.max_hp} → {character.max_hp + hpGainFloor} (+{hpGainFloor})</li>
+                <li>HP: {character.max_hp} → {character.max_hp + hpGainFloor + previewRetroactiveConBonus} (+{hpGainFloor}{previewRetroactiveConBonus > 0 ? ` + ${previewRetroactiveConBonus} retroactive from your Constitution increase` : ''})</li>
                 {resourcesForLevel(character.class?.name, newLevel).map((r) => (
                   <li key={r.name}>{r.name}: {r.max} max</li>
                 ))}
