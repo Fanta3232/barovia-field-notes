@@ -1159,7 +1159,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           </div>
 
-          <div className="panel rounded-sm p-4 aspect-square self-start flex flex-col">
+          <div className="space-y-4">
+          <div className="panel rounded-sm p-4 aspect-square flex flex-col">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
             {rollLog.length === 0 ? (
               <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
@@ -1174,11 +1175,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             )}
           </div>
-      </div>
 
-      <div className="columns-1 md:columns-3 md:gap-4 [column-fill:_balance]">
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
-            <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+            <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
               {character.draconic_ancestry && (
                 <div className="text-base mb-1.5"><span className="text-candle">Draconic Ancestry:</span> {character.draconic_ancestry}</div>
@@ -1195,12 +1194,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           )}
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Languages</h2>
             <p className="text-base">{languages.map((l) => l.language).join(', ') || 'Common'}</p>
           </div>
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
             {character.background?.feature_name ? (
               <Tooltip label={<span className="block text-base">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} block />
@@ -1210,7 +1209,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             )}
           </div>
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Class Features</h2>
             {classFeatures.map((f, i) => (
               <Tooltip key={i} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
@@ -1224,7 +1223,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
 
           {resources.length > 0 && (
-            <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+            <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Resources</h2>
               {resources.map((r) => {
                 const featureText = classFeatures.find((f) => f.name === r.name || r.name.includes(f.name) || f.name.includes(r.name))?.description
@@ -1247,7 +1246,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           )}
 
           {availableEffects.length > 0 && (
-            <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+            <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Active Effects</h2>
               {availableEffects.map((eff) => {
                 const isActive = activeEffects.find((e) => e.effect_name === eff.name)?.is_active ?? false
@@ -1269,7 +1268,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           )}
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Currency</h2>
             {currency ? (
               <div className="grid grid-cols-4 gap-2 text-center">
@@ -1286,6 +1285,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 ))}
               </div>
             ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
+          </div>
           </div>
       </div>
 
