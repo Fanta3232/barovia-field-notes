@@ -64,7 +64,18 @@ type MonsterTemplate = {
     challenge?: string
     type?: string
     traits?: { name: string; description: string }[]
-    actions?: { name: string; description: string }[]
+    actions?: {
+      name: string
+      description: string
+      attack_bonus?: number
+      damage_dice?: string
+      damage_bonus?: number
+      damage_type?: string
+      extra_damage_dice?: string
+      extra_damage_type?: string
+      save_dc?: number
+      save_ability?: string
+    }[]
     legendary_actions?: { name: string; description: string }[]
     [key: string]: any
   }
@@ -760,10 +771,12 @@ export default function AdminPage() {
                           <div key={a.name} className="mb-2 last:mb-0">
                             <div className="flex justify-between items-center gap-2">
                               <span className="text-sm text-candle italic">{a.name}</span>
-                              {typeof a.attack_bonus === 'number' && (
+                              {typeof a.attack_bonus === 'number' && (() => {
+                              const attackBonus: number = a.attack_bonus
+                              return (
                                 <div className="flex gap-1.5 shrink-0">
-                                  <button onClick={() => rollNpcAttack(npc, a.name, a.attack_bonus)} className="text-xs border border-mist rounded-sm px-2 py-0.5 hover:border-candle/50 hover:text-candle transition-colors">
-                                    Hit {a.attack_bonus >= 0 ? `+${a.attack_bonus}` : a.attack_bonus}
+                                  <button onClick={() => rollNpcAttack(npc, a.name, attackBonus)} className="text-xs border border-mist rounded-sm px-2 py-0.5 hover:border-candle/50 hover:text-candle transition-colors">
+                                    Hit {attackBonus >= 0 ? `+${attackBonus}` : attackBonus}
                                   </button>
                                   {a.damage_dice && (
                                     <button onClick={() => rollNpcDamage(npc, a)} className="text-xs border border-mist rounded-sm px-2 py-0.5 hover:border-candle/50 hover:text-candle transition-colors">
@@ -772,7 +785,8 @@ export default function AdminPage() {
                                     </button>
                                   )}
                                 </div>
-                              )}
+                              )
+                            })()}
                               {a.save_dc && <span className="text-xs text-parchment/50 shrink-0">DC {a.save_dc} {a.save_ability}</span>}
                             </div>
                             {a.description && <p className="text-sm text-parchment/70 leading-snug mt-0.5">{a.description}</p>}
