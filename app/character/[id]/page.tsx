@@ -46,7 +46,7 @@ type FullCharacter = {
   species: { name: string; traits: { name: string; description: string }[] } | null
   species_subrace: { name: string; traits: { name: string; description: string }[] } | null
   background: { name: string; feature_name: string | null; feature_description: string | null } | null
-  class: { name: string; hit_die: number; spellcasting_type: string | null; spellcasting_ability: string | null; saving_throw_proficiencies: string[] } | null
+  class: { name: string; hit_die: number; spellcasting_type: string | null; spellcasting_ability: string | null; saving_throw_proficiencies: string[]; weapon_proficiencies: { categories: string[]; specific: string[] } | null; armor_proficiencies: string[] | null } | null
   subclass: { name: string; features: { name: string; description: string; level: number }[] } | null
 }
 
@@ -60,7 +60,7 @@ type InventoryRow = {
   item_name: string | null
   parent_inventory_id: string | null
   equipped: boolean
-  items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null; category: string; properties: Record<string, any>; weapon_range: string | null } | null
+  items: { name: string; description: string; weight_units: number; is_container: boolean; container_capacity: number | null; category: string; properties: Record<string, any>; weapon_range: string | null; weapon_category: string | null } | null
 }
 type CurrencyRow = { gp: number; sp: number; cp: number; pp: number }
 type ClassFeatureRow = { name: string; description: string; level: number }
@@ -136,13 +136,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     async function load() {
       const [charRes, skillsRes, langRes, featsRes, spellsRes, invRes, currRes, slotsRes, resourcesRes, effectsRes, conditionsRes, charConditionsRes] = await Promise.all([
         supabase.from('characters')
-          .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, spellcasting_ability, saving_throw_proficiencies), subclass:subclass_id(name, features)')
+          .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, spellcasting_ability, saving_throw_proficiencies, weapon_proficiencies, armor_proficiencies), subclass:subclass_id(name, features)')
           .eq('id', params.id).single(),
         supabase.from('character_skills').select('skill_name, expertise').eq('character_id', params.id),
         supabase.from('character_languages').select('language').eq('character_id', params.id),
         supabase.from('character_feats').select('source, feats:feat_id(name, description, category)').eq('character_id', params.id),
         supabase.from('character_spells').select('is_prepared, is_always_known, spells:spell_id(name, level, school, description)').eq('character_id', params.id),
-        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity, category, properties, weapon_range)').eq('character_id', params.id),
+        supabase.from('character_inventory').select('id, quantity, item_name, parent_inventory_id, equipped, items:item_id(name, description, weight_units, is_container, container_capacity, category, properties, weapon_range, weapon_category)').eq('character_id', params.id),
         supabase.from('character_currency').select('gp, sp, cp, pp').eq('character_id', params.id).single(),
         supabase.from('character_spell_slots').select('slot_level, max_slots, used_slots').eq('character_id', params.id),
         supabase.from('character_resources').select('name, max_value, current_value, recharge').eq('character_id', params.id),
@@ -574,6 +574,20 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     return abMod + (skillRow.expertise ? PROF_BONUS * 2 : PROF_BONUS)
   }
 
+  // Whether the character's class is actually trained with this weapon — either the weapon's
+  // whole category (simple/martial) or the specific weapon by name (e.g. Bard/Rogue get named
+  // weapons rather than a full category). Falls back to "proficient" if proficiency data isn't
+  // present on the class yet, so this never silently zeroes out a bonus for an unmigrated class.
+  function isWeaponProficient(row: InventoryRow): boolean {
+    const wp = character!.class?.weapon_proficiencies
+    if (!wp) return true
+    const category = row.items?.weapon_category
+    const name = row.items?.name
+    if (category && wp.categories?.includes(category)) return true
+    if (name && wp.specific?.includes(name)) return true
+    return false
+  }
+
   // Attack bonus and damage for an equipped weapon: finesse weapons use whichever of
   // Strength/Dexterity is better, ranged weapons use Dexterity, everything else uses Strength.
   function weaponAttackBonus(row: InventoryRow): number {
@@ -583,7 +597,25 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     const finesse = props.finesse === true
     const isRanged = row.items?.weapon_range === 'ranged'
     const abilityMod = finesse ? Math.max(strMod, dexMod) : (isRanged ? dexMod : strMod)
-    return PROF_BONUS + abilityMod
+    return (isWeaponProficient(row) ? PROF_BONUS : 0) + abilityMod
+  }
+  // Plain-language breakdown of exactly where an attack bonus number comes from — this is what
+  // shows up on hover so nobody has to wonder why a weapon reads +5 instead of +3.
+  function weaponBonusBreakdown(row: InventoryRow): string {
+    const props = row.items?.properties ?? {}
+    const strMod = Math.floor((character!.strength - 10) / 2)
+    const dexMod = Math.floor((character!.dexterity - 10) / 2)
+    const finesse = props.finesse === true
+    const isRanged = row.items?.weapon_range === 'ranged'
+    const usingDex = finesse ? dexMod > strMod : isRanged
+    const abilityName = usingDex ? 'Dexterity' : 'Strength'
+    const abilityMod = usingDex ? dexMod : strMod
+    const abilityStr = `${abilityMod >= 0 ? '+' : ''}${abilityMod} ${abilityName} modifier`
+    const proficient = isWeaponProficient(row)
+    if (proficient) {
+      return `${abilityStr} + proficiency bonus (+${PROF_BONUS}), because your class is proficient with this weapon.`
+    }
+    return `${abilityStr} only — no proficiency bonus, because your class isn't trained with this weapon. You can still attack with it, just without that +${PROF_BONUS}.`
   }
   function weaponDamage(row: InventoryRow): { dice: string; type: string; bonus: number } {
     const props = row.items?.properties ?? {}
@@ -625,6 +657,16 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   // why this is hardcoded for now). Only shown for actual casters.
   const spellcastingAbility = character.class?.spellcasting_ability?.toLowerCase() as (typeof ABILITIES)[number] | undefined
   const spellSaveDC = spellcastingAbility ? 8 + 2 + Math.floor((character[spellcastingAbility] - 10) / 2) : null
+
+  // Flattened, display-ready list of weapon proficiencies — whole categories first (Simple/
+  // Martial Weapons), then any individually named weapons (e.g. a Bard's Rapier, Longsword).
+  const weaponProfPills = [
+    ...(character.class?.weapon_proficiencies?.categories.map((c) => `${c.charAt(0).toUpperCase() + c.slice(1)} Weapons`) ?? []),
+    ...(character.class?.weapon_proficiencies?.specific ?? []),
+  ]
+  const ARMOR_PROFICIENCY_LABELS: Record<string, string> = {
+    light: 'Light Armor', medium: 'Medium Armor', heavy: 'Heavy Armor', shields: 'Shields',
+  }
 
   return (
     <>
@@ -1112,7 +1154,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                       onClick={() => rollAttack('unarmed', 'Unarmed Strike', PROF_BONUS + Math.floor((character.strength - 10) / 2))}
                       className="py-1 pr-2 text-parchment/70 cursor-pointer hover:text-candle transition-colors"
                     >
-                      {(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : b })()}
+                      <Tooltip
+                        label={(() => { const b = PROF_BONUS + Math.floor((character.strength - 10) / 2); return b >= 0 ? `+${b}` : String(b) })()}
+                        title="Attack Bonus"
+                        body={`${(() => { const m = Math.floor((character.strength - 10) / 2); return `${m >= 0 ? '+' : ''}${m} Strength modifier` })()} + proficiency bonus (+${PROF_BONUS}) — everyone is always proficient with their own unarmed strikes.`}
+                      />
                     </td>
                     <td
                       onClick={() => rollDamage('unarmed', 'Unarmed Strike', '1d1', Math.floor((character.strength - 10) / 2), 'bludgeoning')}
@@ -1125,11 +1171,25 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                     const bonus = weaponAttackBonus(row)
                     const dmg = weaponDamage(row)
                     const name = row.items?.name ?? 'Weapon'
+                    const proficient = isWeaponProficient(row)
                     return (
                       <tr key={row.id} className="border-t border-mist/30 hover:bg-mist/10 transition-colors">
-                        <td className="py-1 pr-2">{name}</td>
+                        <td className="py-1 pr-2">
+                          {name}
+                          {!proficient && (
+                            <Tooltip
+                              label={<span className="text-parchment/40 text-sm italic"> (not proficient)</span>}
+                              title="Not Proficient"
+                              body="Your class isn't trained with this weapon, so you don't add your proficiency bonus when attacking with it — just your ability modifier. You can still use it, it's just less accurate."
+                            />
+                          )}
+                        </td>
                         <td onClick={() => rollAttack(row.id, name, bonus)} className="py-1 pr-2 cursor-pointer hover:text-candle transition-colors">
-                          {bonus >= 0 ? `+${bonus}` : bonus}
+                          <Tooltip
+                            label={bonus >= 0 ? `+${bonus}` : String(bonus)}
+                            title="Attack Bonus"
+                            body={weaponBonusBreakdown(row)}
+                          />
                         </td>
                         <td onClick={() => rollDamage(row.id, name, dmg.dice, dmg.bonus, dmg.type)} className="py-1 text-parchment/70 cursor-pointer hover:text-candle transition-colors">
                           {dmg.dice}{dmg.bonus !== 0 ? (dmg.bonus > 0 ? `+${dmg.bonus}` : dmg.bonus) : ''} {dmg.type}
@@ -1220,6 +1280,71 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             ))}
             {variantFeat && <Tooltip label={<span className="block text-base mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-sm">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} block />}
             {classFeatures.length === 0 && !classFeat && subclassL1Features.length === 0 && !variantFeat && <p className="text-sm text-parchment/40 italic">None recorded.</p>}
+          </div>
+
+          <div className="panel rounded-sm p-4">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Proficiencies</h2>
+
+            <p className="text-xs text-parchment/40 uppercase tracking-wide mb-1.5">Armor</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {(character.class?.armor_proficiencies?.length ?? 0) === 0 ? (
+                <span className="text-sm text-parchment/40 italic">None</span>
+              ) : (
+                character.class!.armor_proficiencies!.map((a) => (
+                  <Tooltip
+                    key={a}
+                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{ARMOR_PROFICIENCY_LABELS[a] ?? a}</span>}
+                    title={`${ARMOR_PROFICIENCY_LABELS[a] ?? a} Proficiency`}
+                    body="You've trained enough with this to wear it effectively. Wearing armor you aren't proficient with normally gives you disadvantage on Strength and Dexterity checks, attack rolls, and saving throws, and blocks spellcasting while it's worn — this sheet doesn't auto-enforce that penalty, so treat it as a DM call if it comes up at the table."
+                  />
+                ))
+              )}
+            </div>
+
+            <p className="text-xs text-parchment/40 uppercase tracking-wide mb-1.5">Weapons</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {weaponProfPills.length === 0 ? (
+                <span className="text-sm text-parchment/40 italic">None</span>
+              ) : (
+                weaponProfPills.map((w) => (
+                  <Tooltip
+                    key={w}
+                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{w}</span>}
+                    title={`${w} Proficiency`}
+                    body={`This is why an attack bonus is what it is: proficiency adds +${PROF_BONUS} on top of your ability modifier for weapons you're trained with. Attacking with a weapon outside this list still works — it just leaves that +${PROF_BONUS} out, which is the gap you'll sometimes notice between two attacks that otherwise look similar. Check the Attacks & Spellcasting table below for the exact math on each weapon you have equipped.`}
+                  />
+                ))
+              )}
+            </div>
+
+            {character.chosen_tool_proficiency && (
+              <>
+                <p className="text-xs text-parchment/40 uppercase tracking-wide mb-1.5">Tools</p>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  <Tooltip
+                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{character.chosen_tool_proficiency}</span>}
+                    title="Tool Proficiency"
+                    body="Add your proficiency bonus to ability checks made using this tool — crafting, appraising, forging, playing a tune, and so on, depending on what the tool actually is."
+                  />
+                </div>
+              </>
+            )}
+
+            <p className="text-xs text-parchment/40 uppercase tracking-wide mb-1.5">Saving Throws</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(character.class?.saving_throw_proficiencies?.length ?? 0) === 0 ? (
+                <span className="text-sm text-parchment/40 italic">None</span>
+              ) : (
+                character.class!.saving_throw_proficiencies!.map((s) => (
+                  <Tooltip
+                    key={s}
+                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">{s}</span>}
+                    title={`${s} Saving Throw Proficiency`}
+                    body="Add your proficiency bonus whenever you make this kind of saving throw — already factored into the Abilities panel above."
+                  />
+                ))
+              )}
+            </div>
           </div>
 
           {resources.length > 0 && (
