@@ -101,6 +101,9 @@ export default function LevelUpWizard({
   const [metamagicOptions, setMetamagicOptions] = useState<FeatOption[]>([])
   const [metamagicCount, setMetamagicCount] = useState(0)
   const [chosenMetamagicIds, setChosenMetamagicIds] = useState<string[]>([])
+  const [expertiseSkillOptions, setExpertiseSkillOptions] = useState<string[]>([])
+  const [expertiseCount, setExpertiseCount] = useState(0)
+  const [chosenExpertiseSkills, setChosenExpertiseSkills] = useState<string[]>([])
   const [subclassOptions, setSubclassOptions] = useState<SubclassOption[]>([])
   const [chosenSubclassId, setChosenSubclassId] = useState<string | null>(null)
   const [asiChoice, setAsiChoice] = useState<'asi' | 'feat' | null>(null)
@@ -157,6 +160,19 @@ export default function LevelUpWizard({
         setMetamagicOptions([])
         setMetamagicCount(0)
       }
+
+      const expertiseFeature = ((featuresRes.data ?? []) as ClassFeature[]).find((f) => f.name === 'Expertise')
+      if (expertiseFeature) {
+        // Every row in character_skills already represents a proficient skill (no separate
+        // "proficient" filter needed) — Expertise can only double a skill you're already
+        // proficient in, and one that isn't already at Expertise.
+        const skillsRes = await supabase.from('character_skills').select('skill_name, expertise').eq('character_id', characterId)
+        setExpertiseSkillOptions(((skillsRes.data ?? []) as { skill_name: string; expertise: boolean }[]).filter((s) => !s.expertise).map((s) => s.skill_name))
+        setExpertiseCount(2)
+      } else {
+        setExpertiseSkillOptions([])
+        setExpertiseCount(0)
+      }
       setLoading(false)
     }
     load()
@@ -165,6 +181,7 @@ export default function LevelUpWizard({
     setAsiChoice(null); setAsiMode('one'); setAsiPicks([]); setChosenFeatId(null); setChosenFightingStyleId(null)
     setChosenInvocationIds([])
     setChosenMetamagicIds([])
+    setChosenExpertiseSkills([])
   }, [open, character.class_id, newLevel, willUnlockSubclass, isASILevel])
 
   if (!open) return null
@@ -197,11 +214,19 @@ export default function LevelUpWizard({
     })
   }
 
+  function toggleExpertisePick(skill: string) {
+    setChosenExpertiseSkills((prev) => {
+      if (prev.includes(skill)) return prev.filter((s) => s !== skill)
+      if (prev.length >= expertiseCount) return prev
+      return [...prev, skill]
+    })
+  }
+
   const steps: typeof step[] = ['hp', 'features', ...(willUnlockSubclass ? ['subclass' as const] : []), ...(isASILevel ? ['asi' as const] : []), 'confirm']
   const stepIndex = steps.indexOf(step)
   const canAdvance =
     (step === 'hp' && hpMethod !== null && (hpMethod === 'average' || rolledHp !== null)) ||
-    (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount) && (metamagicCount === 0 || chosenMetamagicIds.length === metamagicCount)) ||
+    (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount) && (metamagicCount === 0 || chosenMetamagicIds.length === metamagicCount) && (expertiseCount === 0 || chosenExpertiseSkills.length === expertiseCount)) ||
     (step === 'subclass' && chosenSubclassId !== null) ||
     (step === 'asi' && ((asiChoice === 'asi' && asiPicks.length === (asiMode === 'one' ? 1 : 2)) || (asiChoice === 'feat' && chosenFeatId !== null))) ||
     (step === 'confirm')
@@ -258,6 +283,9 @@ export default function LevelUpWizard({
       tasks.push(supabase.from('character_feats').insert(
         chosenMetamagicIds.map((feat_id) => ({ character_id: characterId, feat_id, source: `metamagic_level_${newLevel}` }))
       ))
+    }
+    for (const skill of chosenExpertiseSkills) {
+      tasks.push(supabase.from('character_skills').update({ expertise: true }).eq('character_id', characterId).eq('skill_name', skill))
     }
 
     // Spell slot recalculation, if this class casts spells.
@@ -405,6 +433,33 @@ export default function LevelUpWizard({
                   </div>
                 </div>
               )}
+              {expertiseCount > 0 && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">
+                    Choose {expertiseCount} skills to gain Expertise in — your proficiency bonus doubles for checks using them ({chosenExpertiseSkills.length} / {expertiseCount} picked):
+                  </p>
+                  {expertiseSkillOptions.length === 0 ? (
+                    <p className="text-sm text-parchment/40 italic">No eligible proficient skills found on this character's sheet — check Skills before finishing this level-up if that looks wrong.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      {expertiseSkillOptions.map((skill) => {
+                        const picked = chosenExpertiseSkills.includes(skill)
+                        const disabled = !picked && chosenExpertiseSkills.length >= expertiseCount
+                        return (
+                          <button
+                            key={skill}
+                            disabled={disabled}
+                            onClick={() => toggleExpertisePick(skill)}
+                            className={`border rounded-sm py-2 text-sm transition-colors disabled:opacity-30 ${picked ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+                          >
+                            {skill}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -499,6 +554,7 @@ export default function LevelUpWizard({
                 {chosenFightingStyleId && <li>Fighting Style: {fightingStyleOptions.find((f) => f.id === chosenFightingStyleId)?.name}</li>}
                 {chosenInvocationIds.length > 0 && <li>Eldritch Invocations: {chosenInvocationIds.map((id) => invocationOptions.find((f) => f.id === id)?.name).join(', ')}</li>}
                 {chosenMetamagicIds.length > 0 && <li>Metamagic: {chosenMetamagicIds.map((id) => metamagicOptions.find((f) => f.id === id)?.name).join(', ')}</li>}
+                {chosenExpertiseSkills.length > 0 && <li>Expertise: {chosenExpertiseSkills.join(', ')}</li>}
                 {chosenSubclassId && <li>Subclass: {subclassOptions.find((s) => s.id === chosenSubclassId)?.name}</li>}
                 {asiChoice === 'asi' && <li>Ability increase: {asiPicks.map((a) => ABILITY_LABELS[a]).join(', ')}</li>}
                 {asiChoice === 'feat' && <li>Feat: {availableFeats.find((f) => f.id === chosenFeatId)?.name}</li>}
