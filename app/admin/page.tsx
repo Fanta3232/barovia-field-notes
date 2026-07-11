@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import Modal from '@/components/Modal'
 
 type PartyMember = {
   id: string
@@ -50,6 +51,7 @@ type NpcInstance = {
   temp_hp: number
   armor_class: number
   notes: string | null
+  stat_block: MonsterTemplate['stat_block'] | null
 }
 
 type MonsterTemplate = {
@@ -69,28 +71,7 @@ type MonsterTemplate = {
 }
 
 function formatStatBlockAsNotes(m: MonsterTemplate): string {
-  const sb = m.stat_block
-  const lines: string[] = []
-  lines.push(`${sb.type ?? ''}${sb.challenge ? ` — CR ${sb.challenge}` : ''}`)
-  if (sb.speed) lines.push(`Speed: ${sb.speed}`)
-  if (sb.senses) lines.push(`Senses: ${sb.senses}`)
-  if (sb.skills) lines.push(`Skills: ${sb.skills}`)
-  if (sb.damage_resistances) lines.push(`Resistances: ${sb.damage_resistances}`)
-  if (sb.condition_immunities) lines.push(`Condition Immunities: ${sb.condition_immunities}`)
-  if (sb.traits?.length) {
-    lines.push('', 'TRAITS:')
-    sb.traits.forEach((t) => lines.push(`• ${t.name}: ${t.description}`))
-  }
-  if (sb.actions?.length) {
-    lines.push('', 'ACTIONS:')
-    sb.actions.forEach((a) => lines.push(`• ${a.name}: ${a.description}`))
-  }
-  if (sb.legendary_actions?.length) {
-    lines.push('', 'LEGENDARY ACTIONS:')
-    sb.legendary_actions.forEach((a) => lines.push(`• ${a.name}: ${a.description}`))
-  }
-  if (m.source) lines.push('', `Source: ${m.source}`)
-  return lines.join('\n')
+  return `Source: ${m.source ?? 'unknown'}`
 }
 
 async function refreshLog(setLog: (rows: LogEntry[]) => void) {
@@ -148,6 +129,9 @@ export default function AdminPage() {
   const [newNpc, setNewNpc] = useState({ name: '', max_hp: 10, armor_class: 10, notes: '' })
   const [openNpcId, setOpenNpcId] = useState<string | null>(null)
   const [npcHpAdjust, setNpcHpAdjust] = useState('')
+  const [rollToast, setRollToast] = useState<string | null>(null)
+  const [lastNpcCrit, setLastNpcCrit] = useState<Record<string, boolean>>({})
+  const rollToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [monsterLibrary, setMonsterLibrary] = useState<MonsterTemplate[]>([])
   const [monsterSearch, setMonsterSearch] = useState('')
@@ -323,11 +307,49 @@ export default function AdminPage() {
     setCurrentTurn(0)
   }
 
+  function announceRoll(text: string) {
+    setRollToast(text)
+    if (rollToastTimer.current) clearTimeout(rollToastTimer.current)
+    rollToastTimer.current = setTimeout(() => setRollToast(null), 6000)
+  }
+
+  function rollNpcAttack(npc: NpcInstance, actionName: string, attackBonus: number) {
+    const natural = 1 + Math.floor(Math.random() * 20)
+    const total = natural + attackBonus
+    const isCrit = natural === 20
+    setLastNpcCrit((prev) => ({ ...prev, [`${npc.id}:${actionName}`]: isCrit }))
+    announceRoll(`${npc.name} — ${actionName}: ${total} to hit${isCrit ? ' — CRITICAL HIT!' : natural === 1 ? ' — natural 1.' : ''}`)
+  }
+
+  function rollNpcDamage(npc: NpcInstance, action: any) {
+    const key = `${npc.id}:${action.name}`
+    const crit = lastNpcCrit[key]
+    const rollDice = (expr: string) => {
+      const m = expr.match(/(\d+)d(\d+)/)
+      if (!m) return 0
+      const count = parseInt(m[1], 10) * (crit ? 2 : 1)
+      const sides = parseInt(m[2], 10)
+      let total = 0
+      for (let i = 0; i < count; i++) total += 1 + Math.floor(Math.random() * sides)
+      return total
+    }
+    let total = rollDice(action.damage_dice) + (action.damage_bonus ?? 0)
+    let label = `${action.damage_type ?? 'damage'}`
+    if (action.extra_damage_dice) {
+      const extra = rollDice(action.extra_damage_dice)
+      total += extra
+      label += ` + ${action.extra_damage_type ?? ''}`
+    }
+    announceRoll(`${npc.name} — ${action.name} damage: ${total} ${label}${crit ? ' (crit!)' : ''}`)
+    setLastNpcCrit((prev) => ({ ...prev, [key]: false }))
+  }
+
   async function spawnFromLibrary(m: MonsterTemplate) {
     const maxHp = m.stat_block.hit_points ?? 10
     const ac = m.stat_block.armor_class ?? 10
     const { data } = await supabase.from('npc_instances').insert({
-      name: m.name, max_hp: maxHp, current_hp: maxHp, armor_class: ac, notes: formatStatBlockAsNotes(m),
+      name: m.name, max_hp: maxHp, current_hp: maxHp, armor_class: ac,
+      notes: m.source ? `Source: ${m.source}` : null, stat_block: m.stat_block,
     }).select().single()
     if (data) setNpcs((prev) => [...prev, data as NpcInstance])
     setMonsterSearch('')
@@ -600,33 +622,38 @@ export default function AdminPage() {
         </div>
 
         {addNpcOpen && (
-          <div className="border border-mist rounded-sm p-3 mb-3 space-y-2">
-            <input
-              type="text"
-              value={newNpc.name}
-              onChange={(e) => setNewNpc((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="Name (e.g. Strahd's Spellcaster, Wolf #2)"
-              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm"
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-parchment/40 uppercase">Max HP</label>
-                <input type="number" value={newNpc.max_hp} onChange={(e) => setNewNpc((prev) => ({ ...prev, max_hp: parseInt(e.target.value) || 0 }))} className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1" />
+          <Modal open={addNpcOpen} onClose={() => setAddNpcOpen(false)} title="Add a One-Off NPC">
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={newNpc.name}
+                onChange={(e) => setNewNpc((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Name (e.g. Strahd's Spellcaster, Wolf #2)"
+                className="w-full bg-ink border border-mist rounded-sm p-2 text-sm"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-parchment/40 uppercase">Max HP</label>
+                  <input type="number" value={newNpc.max_hp} onChange={(e) => setNewNpc((prev) => ({ ...prev, max_hp: parseInt(e.target.value) || 0 }))} className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1" />
+                </div>
+                <div>
+                  <label className="text-xs text-parchment/40 uppercase">Armor Class</label>
+                  <input type="number" value={newNpc.armor_class} onChange={(e) => setNewNpc((prev) => ({ ...prev, armor_class: parseInt(e.target.value) || 0 }))} className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1" />
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-parchment/40 uppercase">Armor Class</label>
-                <input type="number" value={newNpc.armor_class} onChange={(e) => setNewNpc((prev) => ({ ...prev, armor_class: parseInt(e.target.value) || 0 }))} className="w-full bg-ink border border-mist rounded-sm p-2 text-sm mt-1" />
+              <textarea
+                value={newNpc.notes}
+                onChange={(e) => setNewNpc((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="Quick stat block — attacks, abilities, resistances, whatever you need at the table"
+                rows={4}
+                className="w-full bg-ink border border-mist rounded-sm p-2 text-sm"
+              />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setAddNpcOpen(false)} className="text-sm text-parchment/60 hover:text-parchment px-3 py-1.5">Cancel</button>
+                <button onClick={addNpc} disabled={!newNpc.name.trim()} className="text-sm border border-blood-bright/50 text-blood-bright rounded-sm px-4 py-1.5 hover:bg-blood/20 transition-colors disabled:opacity-30">Create</button>
               </div>
             </div>
-            <textarea
-              value={newNpc.notes}
-              onChange={(e) => setNewNpc((prev) => ({ ...prev, notes: e.target.value }))}
-              placeholder="Quick stat block — attacks, abilities, resistances, whatever you need at the table"
-              rows={3}
-              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm"
-            />
-            <button onClick={addNpc} disabled={!newNpc.name.trim()} className="text-sm border border-blood-bright/50 text-blood-bright rounded-sm px-4 py-1.5 hover:bg-blood/20 transition-colors disabled:opacity-30">Create</button>
-          </div>
+          </Modal>
         )}
 
         {npcs.length === 0 ? (
@@ -655,38 +682,124 @@ export default function AdminPage() {
         {openNpcId && (() => {
           const npc = npcs.find((n) => n.id === openNpcId)
           if (!npc) return null
+          const sb = npc.stat_block
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setOpenNpcId(null)}>
               <div className="absolute inset-0 bg-ink/80 backdrop-blur-sm" />
-              <div className="panel rounded-sm p-6 max-w-md w-full relative" onClick={(e) => e.stopPropagation()}>
+              <div className="panel rounded-sm p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto relative" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="font-display text-lg text-candle">{npc.name}</h3>
-                    <p className="text-sm text-parchment/50">AC {npc.armor_class}</p>
+                    {sb?.type && <p className="text-sm text-parchment/50">{sb.type}{sb.challenge ? ` — CR ${sb.challenge}` : ''}</p>}
                   </div>
                   <button onClick={() => setOpenNpcId(null)} className="text-parchment/50 hover:text-candle text-2xl leading-none">×</button>
                 </div>
-                <div className="flex justify-between items-center text-lg mb-2">
-                  <span>HP</span>
-                  <span>{npc.current_hp} / {npc.max_hp}{npc.temp_hp > 0 ? ` (+${npc.temp_hp})` : ''}</span>
+
+                {/* HP — always front and center, always editable, regardless of whether this NPC has a full stat block */}
+                <div className="border border-mist rounded-sm p-3 mb-4">
+                  <div className="flex justify-between items-center text-lg mb-2">
+                    <span>HP</span>
+                    <span>{npc.current_hp} / {npc.max_hp}{npc.temp_hp > 0 ? ` (+${npc.temp_hp})` : ''}</span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      value={npcHpAdjust}
+                      onChange={(e) => setNpcHpAdjust(e.target.value)}
+                      placeholder="0"
+                      className="w-16 bg-ink border border-mist rounded-sm text-center text-sm py-1.5 text-parchment"
+                    />
+                    <button onClick={() => applyNpcHp(npc, 'damage')} className="flex-1 text-sm border border-blood-bright/50 text-blood-bright rounded-sm hover:bg-blood/20 transition-colors">Damage</button>
+                    <button onClick={() => applyNpcHp(npc, 'heal')} className="flex-1 text-sm border border-candle/50 text-candle rounded-sm hover:bg-candle/10 transition-colors">Heal</button>
+                    <button onClick={() => applyNpcHp(npc, 'temp')} className="flex-1 text-sm border border-mist text-parchment/70 rounded-sm hover:border-candle/50 transition-colors">Temp</button>
+                  </div>
                 </div>
-                <div className="flex gap-1.5 mb-4">
-                  <input
-                    type="number"
-                    value={npcHpAdjust}
-                    onChange={(e) => setNpcHpAdjust(e.target.value)}
-                    placeholder="0"
-                    className="w-16 bg-ink border border-mist rounded-sm text-center text-sm py-1.5 text-parchment"
-                  />
-                  <button onClick={() => applyNpcHp(npc, 'damage')} className="flex-1 text-sm border border-blood-bright/50 text-blood-bright rounded-sm hover:bg-blood/20 transition-colors">Damage</button>
-                  <button onClick={() => applyNpcHp(npc, 'heal')} className="flex-1 text-sm border border-candle/50 text-candle rounded-sm hover:bg-candle/10 transition-colors">Heal</button>
-                  <button onClick={() => applyNpcHp(npc, 'temp')} className="flex-1 text-sm border border-mist text-parchment/70 rounded-sm hover:border-candle/50 transition-colors">Temp</button>
+
+                <div className="flex justify-between text-sm mb-3">
+                  <span className="text-parchment/50">Armor Class</span>
+                  <span className="text-candle">{npc.armor_class}</span>
                 </div>
-                {npc.notes && (
-                  <div className="mb-4 pt-3 border-t border-mist/40">
+
+                {sb ? (
+                  <>
+                    {(sb.speed || sb.senses || sb.skills || sb.damage_resistances || sb.condition_immunities || sb.saving_throws) && (
+                      <div className="text-sm space-y-1 mb-4 pb-3 border-b border-mist/40">
+                        {sb.speed && <p><span className="text-parchment/50">Speed:</span> {sb.speed}</p>}
+                        {sb.senses && <p><span className="text-parchment/50">Senses:</span> {sb.senses}</p>}
+                        {sb.saving_throws && <p><span className="text-parchment/50">Saves:</span> {sb.saving_throws}</p>}
+                        {sb.skills && <p><span className="text-parchment/50">Skills:</span> {sb.skills}</p>}
+                        {sb.damage_resistances && <p><span className="text-parchment/50">Resistances:</span> {sb.damage_resistances}</p>}
+                        {sb.condition_immunities && <p><span className="text-parchment/50">Condition Immunities:</span> {sb.condition_immunities}</p>}
+                      </div>
+                    )}
+
+                    {sb.abilities && (
+                      <div className="grid grid-cols-6 gap-1 text-center mb-4 pb-3 border-b border-mist/40">
+                        {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map((ab) => (
+                          <div key={ab}>
+                            <div className="text-[10px] text-parchment/40 uppercase">{ab}</div>
+                            <div className="text-sm text-candle">{sb.abilities![ab]} ({sb.abilities![ab] >= 10 ? '+' : ''}{Math.floor((sb.abilities![ab] - 10) / 2)})</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {sb.traits && sb.traits.length > 0 && (
+                      <div className="mb-4 pb-3 border-b border-mist/40">
+                        <h4 className="font-display text-sm text-candle mb-2 uppercase tracking-wide">Traits</h4>
+                        {sb.traits.map((t) => (
+                          <p key={t.name} className="text-sm mb-1.5 leading-snug"><span className="text-candle italic">{t.name}.</span> {t.description}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {sb.actions && sb.actions.length > 0 && (
+                      <div className="mb-4 pb-3 border-b border-mist/40">
+                        <h4 className="font-display text-sm text-candle mb-2 uppercase tracking-wide">Actions</h4>
+                        {sb.actions.map((a) => (
+                          <div key={a.name} className="mb-2 last:mb-0">
+                            <div className="flex justify-between items-center gap-2">
+                              <span className="text-sm text-candle italic">{a.name}</span>
+                              {typeof a.attack_bonus === 'number' && (
+                                <div className="flex gap-1.5 shrink-0">
+                                  <button onClick={() => rollNpcAttack(npc, a.name, a.attack_bonus)} className="text-xs border border-mist rounded-sm px-2 py-0.5 hover:border-candle/50 hover:text-candle transition-colors">
+                                    Hit {a.attack_bonus >= 0 ? `+${a.attack_bonus}` : a.attack_bonus}
+                                  </button>
+                                  {a.damage_dice && (
+                                    <button onClick={() => rollNpcDamage(npc, a)} className="text-xs border border-mist rounded-sm px-2 py-0.5 hover:border-candle/50 hover:text-candle transition-colors">
+                                      Dmg {a.damage_dice}{a.damage_bonus ? `+${a.damage_bonus}` : ''}
+                                      {lastNpcCrit[`${npc.id}:${a.name}`] && <span className="text-blood-bright"> (crit)</span>}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                              {a.save_dc && <span className="text-xs text-parchment/50 shrink-0">DC {a.save_dc} {a.save_ability}</span>}
+                            </div>
+                            {a.description && <p className="text-sm text-parchment/70 leading-snug mt-0.5">{a.description}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {sb.legendary_actions && sb.legendary_actions.length > 0 && (
+                      <div className="mb-4 pb-3 border-b border-mist/40">
+                        <h4 className="font-display text-sm text-candle mb-2 uppercase tracking-wide">Legendary Actions</h4>
+                        {sb.legendary_actions.map((a) => (
+                          <p key={a.name} className="text-sm mb-1.5 leading-snug"><span className="text-candle italic">{a.name}.</span> {a.description}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {sb.notes_for_dm && (
+                      <p className="text-sm text-parchment/60 italic mb-4">{sb.notes_for_dm}</p>
+                    )}
+                  </>
+                ) : npc.notes ? (
+                  <div className="mb-4 pt-1">
                     <p className="text-sm text-parchment/70 whitespace-pre-wrap leading-relaxed">{npc.notes}</p>
                   </div>
-                )}
+                ) : null}
+
                 <div className="flex justify-between pt-3 border-t border-mist/40">
                   <button onClick={() => { addNpcToInitiative(npc); setOpenNpcId(null) }} className="text-sm text-candle hover:text-parchment">+ Add to Initiative</button>
                   <button onClick={() => deleteNpc(npc.id)} className="text-sm text-parchment/40 hover:text-blood-bright">Remove NPC</button>
@@ -696,6 +809,16 @@ export default function AdminPage() {
           )
         })()}
       </div>
+
+      {rollToast && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 roll-toast rounded-sm pl-4 pr-5 py-3 max-w-lg flex items-start gap-3">
+          <span className="wax-seal rounded-full w-2.5 h-2.5 mt-1.5 shrink-0" />
+          <div>
+            <p className="text-lg text-candle leading-snug">{rollToast}</p>
+            <button onClick={() => setRollToast(null)} className="text-sm text-parchment/40 hover:text-parchment mt-1">Dismiss</button>
+          </div>
+        </div>
+      )}
 
       <div className="panel rounded-sm p-4 mb-4">
         <h2 className="font-display text-base text-blood-bright mb-3 uppercase tracking-wide">Campaign Notes</h2>
