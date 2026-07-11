@@ -1217,25 +1217,25 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 </div>
               )}
             </div>
+
+            <div className="panel rounded-sm p-4">
+              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
+              {rollLog.length === 0 ? (
+                <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                  {rollLog.map((entry, i) => (
+                    <div key={i} className="text-sm flex gap-2">
+                      <span className="text-parchment/30 shrink-0">{entry.time}</span>
+                      <span className="text-parchment/70">{entry.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="space-y-4">
-          <div className="panel rounded-sm p-4 aspect-square flex flex-col">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
-            {rollLog.length === 0 ? (
-              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
-            ) : (
-              <div className="space-y-1.5 overflow-y-auto flex-1">
-                {rollLog.map((entry, i) => (
-                  <div key={i} className="text-sm flex gap-2">
-                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
-                    <span className="text-parchment/70">{entry.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
             <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
