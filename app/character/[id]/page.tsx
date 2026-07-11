@@ -108,6 +108,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const [charConditions, setCharConditions] = useState<CharConditionRow[]>([])
   const [statusModalOpen, setStatusModalOpen] = useState(false)
   const [roleplayModalOpen, setRoleplayModalOpen] = useState(false)
+  const [notesModalOpen, setNotesModalOpen] = useState(false)
   const [hpAdjust, setHpAdjust] = useState('')
 
   // Rolling engine state. rollMode is a "stance" you set once (e.g. after a spell grants
@@ -646,6 +647,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </button>
           <button onClick={() => setStatusModalOpen(true)} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Status Effects</button>
           <button onClick={openRoleplay} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Backstory</button>
+          <button onClick={() => setNotesModalOpen(true)} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Notes</button>
           {(spellSlots.length > 0 || resources.length > 0) && (
             <>
               <button onClick={shortRest} className="text-sm border border-mist rounded-sm px-3 py-1.5 text-parchment/70 hover:border-candle/50 hover:text-candle transition-colors">Short Rest</button>
@@ -1287,17 +1289,6 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
-
-          <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Notes</h2>
-            <textarea
-              defaultValue={character.notes ?? ''}
-              onBlur={(e) => updateNotes(e.target.value)}
-              placeholder="Quick jots — an NPC name, a clue, a reminder for next session…"
-              rows={5}
-              className="w-full bg-ink border border-mist rounded-sm p-2 text-sm text-parchment focus:border-candle/50 outline-none placeholder:text-parchment/30"
-            />
-          </div>
         </section>
 
         <section className="md:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1493,6 +1484,16 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <button onClick={saveRoleplay} className="text-sm bg-blood hover:bg-blood-bright transition rounded-sm px-3 py-1.5">Save</button>
         </div>
       </div>
+    </Modal>
+
+    <Modal open={notesModalOpen} onClose={() => setNotesModalOpen(false)} title="Notes">
+      <textarea
+        defaultValue={character.notes ?? ''}
+        onBlur={(e) => updateNotes(e.target.value)}
+        placeholder="Quick jots — an NPC name, a clue, a reminder for next session…"
+        rows={10}
+        className="w-full bg-ink border border-mist rounded-sm p-2 text-base text-parchment focus:border-candle/50 outline-none placeholder:text-parchment/30"
+      />
     </Modal>
     </>
   )
