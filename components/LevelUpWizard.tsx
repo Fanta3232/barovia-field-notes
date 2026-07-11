@@ -54,16 +54,45 @@ export function profBonusForLevel(level: number): number {
 // Verified spell slot tables (SRD 5.1), indexed by class level. Full casters (Bard, Cleric,
 // Druid, Sorcerer, Wizard) start at level 1; half casters (Paladin, Ranger) start at level 2.
 const FULL_CASTER_SLOTS: Record<number, number[]> = {
-  1: [2], 2: [3], 3: [4, 2], 4: [4, 3], 5: [4, 3, 2],
+  1: [2], 2: [3], 3: [4, 2], 4: [4, 3], 5: [4, 3, 2], 6: [4, 3, 3], 7: [4, 3, 3, 1],
+  8: [4, 3, 3, 2], 9: [4, 3, 3, 3, 1], 10: [4, 3, 3, 3, 2], 11: [4, 3, 3, 3, 2, 1],
+  12: [4, 3, 3, 3, 2, 1], 13: [4, 3, 3, 3, 2, 1, 1], 14: [4, 3, 3, 3, 2, 1, 1],
+  15: [4, 3, 3, 3, 2, 1, 1, 1], 16: [4, 3, 3, 3, 2, 1, 1, 1], 17: [4, 3, 3, 3, 2, 1, 1, 1, 1],
+  18: [4, 3, 3, 3, 3, 1, 1, 1, 1], 19: [4, 3, 3, 3, 3, 2, 1, 1, 1], 20: [4, 3, 3, 3, 3, 2, 2, 1, 1],
 }
 const HALF_CASTER_SLOTS: Record<number, number[]> = {
-  1: [], 2: [2], 3: [3], 4: [3], 5: [4, 2],
+  1: [], 2: [2], 3: [3], 4: [3], 5: [4, 2], 6: [4, 2], 7: [4, 3], 8: [4, 3], 9: [4, 3, 2],
+  10: [4, 3, 2], 11: [4, 3, 3], 12: [4, 3, 3], 13: [4, 3, 3, 1], 14: [4, 3, 3, 1],
+  15: [4, 3, 3, 2], 16: [4, 3, 3, 2], 17: [4, 3, 3, 3, 1], 18: [4, 3, 3, 3, 1],
+  19: [4, 3, 3, 3, 2], 20: [4, 3, 3, 3, 2],
 }
 // Warlock Pact Magic: always the same slot level, recharges on a short rest.
 const PACT_MAGIC: Record<number, { slots: number; slotLevel: number }> = {
   1: { slots: 1, slotLevel: 1 }, 2: { slots: 2, slotLevel: 1 }, 3: { slots: 2, slotLevel: 2 },
-  4: { slots: 2, slotLevel: 2 }, 5: { slots: 2, slotLevel: 3 },
+  4: { slots: 2, slotLevel: 2 }, 5: { slots: 2, slotLevel: 3 }, 6: { slots: 2, slotLevel: 3 },
+  7: { slots: 2, slotLevel: 4 }, 8: { slots: 2, slotLevel: 4 }, 9: { slots: 2, slotLevel: 5 },
+  10: { slots: 2, slotLevel: 5 }, 11: { slots: 3, slotLevel: 5 }, 12: { slots: 3, slotLevel: 5 },
+  13: { slots: 3, slotLevel: 5 }, 14: { slots: 3, slotLevel: 5 }, 15: { slots: 3, slotLevel: 5 },
+  16: { slots: 3, slotLevel: 5 }, 17: { slots: 4, slotLevel: 5 }, 18: { slots: 4, slotLevel: 5 },
+  19: { slots: 4, slotLevel: 5 }, 20: { slots: 4, slotLevel: 5 },
 }
+
+// ASI-granting levels vary by class: everyone gets 4/8/12/16/19, Fighter also gets 6/14,
+// Rogue also gets 10.
+const ASI_LEVELS: Record<string, number[]> = {
+  Fighter: [4, 6, 8, 12, 14, 16, 19],
+  Rogue: [4, 8, 10, 12, 16, 19],
+}
+const DEFAULT_ASI_LEVELS = [4, 8, 12, 16, 19]
+function isAsiLevel(className: string | undefined, level: number): boolean {
+  return (ASI_LEVELS[className ?? ''] ?? DEFAULT_ASI_LEVELS).includes(level)
+}
+
+// Warlock's Invocations Known table (SRD 5.1) — number of NEW invocations gained at each level
+// (2 total at 2nd, growing to 8 total by 18th).
+const NEW_INVOCATIONS_AT_LEVEL: Record<number, number> = { 2: 2, 5: 1, 7: 1, 9: 1, 12: 1, 15: 1, 18: 1 }
+// Sorcerer's Metamagic — 2 options at 3rd level, one more at 10th and 17th.
+const NEW_METAMAGIC_AT_LEVEL: Record<number, number> = { 3: 2, 10: 1, 17: 1 }
 
 function spellSlotsForLevel(spellcastingType: string | null, startsAt: number, level: number): number[] | null {
   if (!spellcastingType) return null
@@ -86,7 +115,7 @@ export default function LevelUpWizard({
   const hitDie = character.class?.hit_die ?? 8
   const conMod = Math.floor((character.constitution - 10) / 2)
   const averageRoll = Math.floor(hitDie / 2) + 1
-  const isASILevel = newLevel === 4
+  const isASILevel = isAsiLevel(character.class?.name, newLevel)
   const willUnlockSubclass = character.class?.subclass_starts_at_level === newLevel && !character.subclass_id
 
   const [step, setStep] = useState<'hp' | 'features' | 'subclass' | 'asi' | 'confirm'>('hp')
@@ -141,21 +170,29 @@ export default function LevelUpWizard({
         setFightingStyleOptions([])
       }
 
-      const invocationFeature = ((featuresRes.data ?? []) as ClassFeature[]).find((f) => f.name === 'Eldritch Invocations')
-      if (invocationFeature) {
-        const invRes = await supabase.from('feats').select('id, name, description, prerequisite').eq('category', 'eldritch_invocation').order('name')
-        setInvocationOptions((invRes.data ?? []) as FeatOption[])
-        setInvocationCount(2) // Warlocks gain two invocations at 2nd level, the only invocation-granting level in this range
+      const newInvocationCount = character.class?.name === 'Warlock' ? (NEW_INVOCATIONS_AT_LEVEL[newLevel] ?? 0) : 0
+      if (newInvocationCount > 0) {
+        const [invRes, knownRes] = await Promise.all([
+          supabase.from('feats').select('id, name, description, prerequisite').eq('category', 'eldritch_invocation').order('name'),
+          supabase.from('character_feats').select('feats:feat_id(name)').eq('character_id', characterId),
+        ])
+        const knownNames = new Set(((knownRes.data ?? []) as unknown as { feats: { name: string } }[]).map((r) => r.feats?.name))
+        setInvocationOptions(((invRes.data ?? []) as FeatOption[]).filter((f) => !knownNames.has(f.name)))
+        setInvocationCount(newInvocationCount)
       } else {
         setInvocationOptions([])
         setInvocationCount(0)
       }
 
-      const metamagicFeature = ((featuresRes.data ?? []) as ClassFeature[]).find((f) => f.name === 'Metamagic')
-      if (metamagicFeature) {
-        const mmRes = await supabase.from('feats').select('id, name, description, prerequisite').eq('category', 'metamagic').order('name')
-        setMetamagicOptions((mmRes.data ?? []) as FeatOption[])
-        setMetamagicCount(2) // Sorcerers gain two Metamagic options at 3rd level, the only Metamagic-granting level in this range
+      const newMetamagicCount = character.class?.name === 'Sorcerer' ? (NEW_METAMAGIC_AT_LEVEL[newLevel] ?? 0) : 0
+      if (newMetamagicCount > 0) {
+        const [mmRes, knownRes] = await Promise.all([
+          supabase.from('feats').select('id, name, description, prerequisite').eq('category', 'metamagic').order('name'),
+          supabase.from('character_feats').select('feats:feat_id(name)').eq('character_id', characterId),
+        ])
+        const knownNames = new Set(((knownRes.data ?? []) as unknown as { feats: { name: string } }[]).map((r) => r.feats?.name))
+        setMetamagicOptions(((mmRes.data ?? []) as FeatOption[]).filter((f) => !knownNames.has(f.name)))
+        setMetamagicCount(newMetamagicCount)
       } else {
         setMetamagicOptions([])
         setMetamagicCount(0)

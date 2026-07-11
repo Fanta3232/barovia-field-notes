@@ -77,15 +77,13 @@ type CharConditionRow = { condition_id: string; conditions: { name: string; desc
 // Wind (Fighter) is a one-time resource use already covered by character_resources, and
 // Unarmored Defense (Monk/Barbarian) is an always-on passive already baked into AC. Extend
 // this as leveling adds more toggleable abilities (Wild Shape, Divine Smite readiness, etc.).
-const CLASS_EFFECTS: Record<string, { name: string; description: string }[]> = {
-  Barbarian: [{
-    name: 'Raging',
-    description: 'Advantage on Strength checks and Strength saving throws. +2 bonus to melee damage rolls using Strength. Resistance to bludgeoning, piercing, and slashing damage. Can\u2019t cast spells or concentrate on spells while raging.',
-  }],
-  Rogue: [{
-    name: 'Sneak Attack Ready',
-    description: 'You have advantage on this attack, or an ally is within 5 feet of the target and you don\u2019t have disadvantage \u2014 deal an extra 1d6 damage once this turn with a finesse or ranged weapon.',
-  }],
+// Descriptions are generated per-level below (rageDamageBonus/sneakAttackDice) since both
+// Rage's damage bonus and Sneak Attack's dice actually scale as the character levels up.
+function rageDamageBonus(level: number): number {
+  return level >= 16 ? 4 : level >= 9 ? 3 : 2
+}
+function sneakAttackDice(level: number): number {
+  return Math.ceil(level / 2)
 }
 
 const ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'] as const
@@ -553,7 +551,18 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   // for the rest of this component. Keep in sync with LevelUpWizard's profBonusForLevel.
   const PROF_BONUS = Math.floor((character.level - 1) / 4) + 2
 
-  const availableEffects = character.class ? (CLASS_EFFECTS[character.class.name] ?? []) : []
+  const availableEffects: { name: string; description: string }[] =
+    character.class?.name === 'Barbarian'
+      ? [{
+          name: 'Raging',
+          description: `Advantage on Strength checks and Strength saving throws. +${rageDamageBonus(character.level)} bonus to melee damage rolls using Strength. Resistance to bludgeoning, piercing, and slashing damage. Can\u2019t cast spells or concentrate on spells while raging.`,
+        }]
+      : character.class?.name === 'Rogue'
+      ? [{
+          name: 'Sneak Attack Ready',
+          description: `You have advantage on this attack, or an ally is within 5 feet of the target and you don\u2019t have disadvantage \u2014 deal an extra ${sneakAttackDice(character.level)}d6 damage once this turn with a finesse or ranged weapon.`,
+        }]
+      : []
   // Carry capacity is a house-rule design decision, not a PHB-verified formula (see the
   // weight_units convention documented in schema.sql). Base is 2x Strength score; owning a
   // Backpack doubles that again, but only ever once — a second Backpack doesn't stack, since
