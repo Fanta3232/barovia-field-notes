@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Tooltip from '@/components/Tooltip'
 import Modal from '@/components/Modal'
+import LevelUpWizard from '@/components/LevelUpWizard'
 import { ALL_SKILLS, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/types'
 
 type FullCharacter = {
@@ -11,6 +12,7 @@ type FullCharacter = {
   name: string
   level: number
   class_id: string
+  subclass_id: string | null
   alignment: string | null
   max_hp: number
   current_hp: number
@@ -46,7 +48,8 @@ type FullCharacter = {
   species: { name: string; traits: { name: string; description: string }[] } | null
   species_subrace: { name: string; traits: { name: string; description: string }[] } | null
   background: { name: string; feature_name: string | null; feature_description: string | null } | null
-  class: { name: string; hit_die: number; spellcasting_type: string | null; spellcasting_ability: string | null; saving_throw_proficiencies: string[]; weapon_proficiencies: { categories: string[]; specific: string[] } | null; armor_proficiencies: string[] | null } | null
+  pending_level_up: boolean
+  class: { name: string; hit_die: number; spellcasting_type: string | null; spellcasting_ability: string | null; saving_throw_proficiencies: string[]; weapon_proficiencies: { categories: string[]; specific: string[] } | null; armor_proficiencies: string[] | null; spellcasting_starts_at_level: number; subclass_starts_at_level: number } | null
   subclass: { name: string; features: { name: string; description: string; level: number }[] } | null
 }
 
@@ -86,10 +89,8 @@ const CLASS_EFFECTS: Record<string, { name: string; description: string }[]> = {
 }
 
 const ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'] as const
-// Hardcoded at +2 (level 1) since leveling isn't built yet — every proficiency-bonus
-// calculation on the sheet references this one constant so it only needs updating in one
-// place once leveling exists.
-const PROF_BONUS = 2
+// Proficiency bonus is now computed per-character from level (see PROF_BONUS inside the
+// component body) now that leveling exists — no longer a flat hardcoded constant.
 
 export default function CharacterSheetPage({ params }: { params: { id: string } }) {
   const [character, setCharacter] = useState<FullCharacter | null>(null)
@@ -107,6 +108,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const [conditionsList, setConditionsList] = useState<ConditionRow[]>([])
   const [charConditions, setCharConditions] = useState<CharConditionRow[]>([])
   const [statusModalOpen, setStatusModalOpen] = useState(false)
+  const [levelUpOpen, setLevelUpOpen] = useState(false)
   const [roleplayModalOpen, setRoleplayModalOpen] = useState(false)
   const [notesModalOpen, setNotesModalOpen] = useState(false)
   const [hpAdjust, setHpAdjust] = useState('')
@@ -132,11 +134,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   })
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    async function load() {
+  async function loadCharacterData() {
       const [charRes, skillsRes, langRes, featsRes, spellsRes, invRes, currRes, slotsRes, resourcesRes, effectsRes, conditionsRes, charConditionsRes] = await Promise.all([
         supabase.from('characters')
-          .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, spellcasting_ability, saving_throw_proficiencies, weapon_proficiencies, armor_proficiencies), subclass:subclass_id(name, features)')
+          .select('*, species:species_id(name, traits), species_subrace:species_subrace_id(name, traits), background:background_id(name, feature_name, feature_description), class:class_id(name, hit_die, spellcasting_type, spellcasting_ability, saving_throw_proficiencies, weapon_proficiencies, armor_proficiencies, spellcasting_starts_at_level, subclass_starts_at_level), subclass:subclass_id(name, features)')
           .eq('id', params.id).single(),
         supabase.from('character_skills').select('skill_name, expertise').eq('character_id', params.id),
         supabase.from('character_languages').select('language').eq('character_id', params.id),
@@ -174,8 +175,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         setClassFeatures((cfRes.data ?? []) as ClassFeatureRow[])
       }
       setLoading(false)
-    }
-    load()
+  }
+
+  useEffect(() => {
+    loadCharacterData()
   }, [params.id])
 
   function modifier(score: number) {
@@ -545,6 +548,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   if (loading) return <main className="p-10 text-parchment/60">Loading the dossier…</main>
   if (!character) return <main className="p-10 text-blood-bright">No record of this soul.</main>
 
+  // Proficiency bonus now scales with level (2014 rules: +2 at levels 1-4, +3 at 5-8, etc.)
+  // instead of the old hardcoded +2 — this line shadows the module-level PROF_BONUS constant
+  // for the rest of this component. Keep in sync with LevelUpWizard's profBonusForLevel.
+  const PROF_BONUS = Math.floor((character.level - 1) / 4) + 2
+
   const availableEffects = character.class ? (CLASS_EFFECTS[character.class.name] ?? []) : []
   // Carry capacity is a house-rule design decision, not a PHB-verified formula (see the
   // weight_units convention documented in schema.sql). Base is 2x Strength score; owning a
@@ -567,6 +575,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const cantrips = charSpells.filter((s) => s.spells.level === 0)
   const knownSpells = charSpells.filter((s) => s.spells.level > 0)
   const classFeat = charFeats.find((f) => f.source === 'class_feature_l1')
+  const fightingStyleFeats = charFeats.filter((f) => f.feats.category === 'fighting_style' && f.source !== 'class_feature_l1')
   const variantFeat = charFeats.find((f) => f.source === 'variant_human')
   const allTraits = [
     ...(character.species?.traits ?? []),
@@ -708,6 +717,16 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           )}
         </div>
       </div>
+
+      {character.pending_level_up && (
+        <button
+          onClick={() => setLevelUpOpen(true)}
+          className="w-full mb-4 border border-candle bg-candle/10 text-candle rounded-sm py-3 px-4 text-left hover:bg-candle/20 transition-colors flex items-center justify-between"
+        >
+          <span className="font-display text-base tracking-wide">✦ Your DM has granted you a level up — {character.name} is ready for level {character.level + 1}</span>
+          <span className="text-sm underline decoration-dotted">Start →</span>
+        </button>
+      )}
 
       <div className="flex items-center justify-between mb-6 pb-4 border-b border-mist gap-4 flex-wrap">
         <div className="flex items-center gap-1.5">
@@ -1296,11 +1315,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               <Tooltip key={i} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
             {classFeat && <Tooltip label={<span className="block text-base mb-1.5">{classFeat.feats.name} <span className="text-parchment/40 text-sm">(Fighting Style)</span></span>} title={classFeat.feats.name} body={classFeat.feats.description} block />}
+            {fightingStyleFeats.map((f) => (
+              <Tooltip key={f.feats.name} label={<span className="block text-base mb-1.5">{f.feats.name} <span className="text-parchment/40 text-sm">(Fighting Style)</span></span>} title={f.feats.name} body={f.feats.description} block />
+            ))}
             {subclassL1Features.map((f) => (
               <Tooltip key={f.name} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
             {variantFeat && <Tooltip label={<span className="block text-base mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-sm">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} block />}
-            {classFeatures.length === 0 && !classFeat && subclassL1Features.length === 0 && !variantFeat && <p className="text-sm text-parchment/40 italic">None recorded.</p>}
+            {classFeatures.length === 0 && !classFeat && fightingStyleFeats.length === 0 && subclassL1Features.length === 0 && !variantFeat && <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
 
           <div className="panel rounded-sm p-4">
@@ -1639,6 +1661,15 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         className="w-full bg-ink border border-mist rounded-sm p-2 text-base text-parchment focus:border-candle/50 outline-none placeholder:text-parchment/30"
       />
     </Modal>
+    {levelUpOpen && (
+      <LevelUpWizard
+        characterId={character.id}
+        character={character}
+        open={levelUpOpen}
+        onClose={() => setLevelUpOpen(false)}
+        onComplete={async () => { setLevelUpOpen(false); await loadCharacterData() }}
+      />
+    )}
     </>
   )
 }
