@@ -877,9 +877,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </div>
       ) : (
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-        <section className="md:col-span-4 space-y-4">
-          <div className="panel rounded-sm p-4">
+      <div className="columns-1 md:columns-3 md:gap-4 [column-fill:_balance]">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Abilities</h2>
             {ABILITIES.map((ab) => {
               const speciesBonus = character.species_asi?.[ab]
@@ -937,10 +936,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               )
             })}
           </div>
-        </section>
 
-        <section className="md:col-span-4 space-y-4">
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
             <div className="flex gap-1.5 mb-2.5">
@@ -1028,7 +1025,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           </div>
 
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-display text-base text-candle uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
               <button onClick={rollDeathSave} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2.5 py-0.5">Roll</button>
@@ -1071,7 +1068,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           </div>
 
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-display text-base text-candle uppercase tracking-wide">Status Effects</h2>
               <button onClick={() => setStatusModalOpen(true)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">Manage</button>
@@ -1092,7 +1089,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 break-inside-avoid mb-4">
             <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
               <table className="w-full text-base">
@@ -1176,11 +1173,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               )}
             </div>
           </div>
-        </section>
 
-        <section className="md:col-span-4 space-y-4">
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
-            <div className="panel rounded-sm p-4">
+            <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
               {character.draconic_ancestry && (
                 <div className="text-base mb-1.5"><span className="text-candle">Draconic Ancestry:</span> {character.draconic_ancestry}</div>
@@ -1197,12 +1192,12 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           )}
 
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Languages</h2>
             <p className="text-base">{languages.map((l) => l.language).join(', ') || 'Common'}</p>
           </div>
 
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Background Feature</h2>
             {character.background?.feature_name ? (
               <Tooltip label={<span className="block text-base">{character.background.feature_name}</span>} title={character.background.feature_name} body={character.background.feature_description ?? ''} block />
@@ -1212,7 +1207,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             )}
           </div>
 
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Class Features</h2>
             {classFeatures.map((f, i) => (
               <Tooltip key={i} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
@@ -1226,7 +1221,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
 
           {resources.length > 0 && (
-            <div className="panel rounded-sm p-4">
+            <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Resources</h2>
               {resources.map((r) => {
                 const featureText = classFeatures.find((f) => f.name === r.name || r.name.includes(f.name) || f.name.includes(r.name))?.description
@@ -1249,7 +1244,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           )}
 
           {availableEffects.length > 0 && (
-            <div className="panel rounded-sm p-4">
+            <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Active Effects</h2>
               {availableEffects.map((eff) => {
                 const isActive = activeEffects.find((e) => e.effect_name === eff.name)?.is_active ?? false
@@ -1271,7 +1266,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           )}
 
-          <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Currency</h2>
             {currency ? (
               <div className="grid grid-cols-4 gap-2 text-center">
@@ -1289,9 +1284,9 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               </div>
             ) : <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
-        </section>
+      </div>
 
-        <section className="md:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Spells</h2>
             {spellSlots.length > 0 && (
