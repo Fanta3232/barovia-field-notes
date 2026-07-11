@@ -877,6 +877,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           </div>
         </div>
       ) : (
+      <>
       <div className="columns-1 md:columns-3 md:gap-4 [column-fill:_balance]">
           <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Abilities</h2>
@@ -1418,7 +1419,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             }) : <p className="text-sm text-parchment/40 italic">No equipment recorded.</p>}
           </div>
         </section>
-      </div>
+      </>
       )}
     </main>
 
