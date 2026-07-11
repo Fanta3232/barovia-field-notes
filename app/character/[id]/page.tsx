@@ -878,8 +878,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
         </div>
       ) : (
       <>
-      <div className="columns-1 md:columns-3 md:gap-4 [column-fill:_balance]">
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Abilities</h2>
             {ABILITIES.map((ab) => {
               const speciesBonus = character.species_asi?.[ab]
@@ -938,7 +938,8 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             })}
           </div>
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="space-y-4">
+          <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Vitals</h2>
             <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
             <div className="flex gap-1.5 mb-2.5">
@@ -1026,7 +1027,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           </div>
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="panel rounded-sm p-4">
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-display text-base text-candle uppercase tracking-wide">Death Saves &amp; Hit Dice</h2>
               <button onClick={rollDeathSave} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2.5 py-0.5">Roll</button>
@@ -1069,7 +1070,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             </div>
           </div>
 
-          <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
+          <div className="panel rounded-sm p-4">
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-display text-base text-candle uppercase tracking-wide">Status Effects</h2>
               <button onClick={() => setStatusModalOpen(true)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">Manage</button>
@@ -1090,8 +1091,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 break-inside-avoid mb-4">
-            <div className="panel rounded-sm p-4">
+          <div className="panel rounded-sm p-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Attacks &amp; Spellcasting</h2>
               <table className="w-full text-base">
                 <thead>
@@ -1157,24 +1157,26 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                 </div>
               )}
             </div>
-
-            <div className="panel rounded-sm p-4">
-              <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
-              {rollLog.length === 0 ? (
-                <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
-              ) : (
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                  {rollLog.map((entry, i) => (
-                    <div key={i} className="text-sm flex gap-2">
-                      <span className="text-parchment/30 shrink-0">{entry.time}</span>
-                      <span className="text-parchment/70">{entry.text}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
 
+          <div className="panel rounded-sm p-4 aspect-square self-start flex flex-col">
+            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Roll Log</h2>
+            {rollLog.length === 0 ? (
+              <p className="text-sm text-parchment/40 italic">Nothing rolled yet this session.</p>
+            ) : (
+              <div className="space-y-1.5 overflow-y-auto flex-1">
+                {rollLog.map((entry, i) => (
+                  <div key={i} className="text-sm flex gap-2">
+                    <span className="text-parchment/30 shrink-0">{entry.time}</span>
+                    <span className="text-parchment/70">{entry.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+      </div>
+
+      <div className="columns-1 md:columns-3 md:gap-4 [column-fill:_balance]">
           {(allTraits.length > 0 || character.draconic_ancestry || character.favored_enemy || character.favored_terrain) && (
             <div className="panel rounded-sm p-4 break-inside-avoid mb-4">
               <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Species Traits</h2>
