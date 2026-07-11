@@ -688,6 +688,24 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   }
   const currentAC = computeCurrentAC()
 
+  // Speed bonuses that scale with level and depend on current armor — Barbarian's Fast Movement
+  // (level 5+, no heavy armor) and Monk's Unarmored Movement (level 2+, scaling further at 6/10/
+  // 14/18, no armor or shield at all) were previously just static text with no effect on the
+  // actual displayed Speed value.
+  function computeSpeedBonus(): number {
+    const equippedArmor = inventory.find((r) => r.equipped && r.items?.category === 'armor' && r.items?.properties?.ac_base != null)
+    const equippedShield = inventory.find((r) => r.equipped && r.items?.category === 'armor' && r.items?.properties?.ac_bonus != null)
+    const armorType = equippedArmor?.items?.properties?.type as string | undefined
+    if (character!.class?.name === 'Barbarian' && character!.level >= 5 && armorType !== 'heavy') return 10
+    if (character!.class?.name === 'Monk' && !equippedArmor && !equippedShield) {
+      const level = character!.level
+      return level >= 18 ? 30 : level >= 14 ? 25 : level >= 10 ? 20 : level >= 6 ? 15 : level >= 2 ? 10 : 0
+    }
+    return 0
+  }
+  const speedBonus = computeSpeedBonus()
+  const currentSpeed = character.speed + speedBonus
+
   // Spell Save DC — only shown for actual casters. Uses the level-derived PROF_BONUS above.
   const spellcastingAbility = character.class?.spellcasting_ability?.toLowerCase() as (typeof ABILITIES)[number] | undefined
   const spellSaveDC = spellcastingAbility ? 8 + PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2) : null
@@ -803,7 +821,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-base">
               <Row label="AC" value={String(currentAC)} />
               <Row label="Initiative" value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)} onClick={() => rollCheck('Initiative', character.initiative_bonus)} />
-              <Row label="Speed" value={`${character.speed} ft`} />
+              <Row label="Speed" value={`${currentSpeed} ft${speedBonus > 0 ? ` (+${speedBonus})` : ''}`} />
               {spellSaveDC != null && <Row label="Spell DC" value={String(spellSaveDC)} />}
             </div>
             <div className="flex justify-between items-center text-base mt-1.5 pt-1.5 border-t border-mist/30">
@@ -1075,11 +1093,11 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               onClick={() => rollCheck('Initiative', character.initiative_bonus)}
             />
             <Row
-              label={<Tooltip label="Speed" title="Speed" body="How far you can move, in feet, on your turn. Difficult terrain, being Prone, or certain conditions can reduce how far that movement actually gets you." />}
-              value={`${character.speed} ft`}
+              label={<Tooltip label="Speed" title="Speed" body={`How far you can move, in feet, on your turn. Difficult terrain, being Prone, or certain conditions can reduce how far that movement actually gets you.${speedBonus > 0 ? ` Includes a +${speedBonus} ft bonus from ${character.class?.name === 'Barbarian' ? 'Fast Movement' : 'Unarmored Movement'}.` : ''}`} />}
+              value={`${currentSpeed} ft${speedBonus > 0 ? ` (+${speedBonus})` : ''}`}
             />
             <Row
-              label={<Tooltip label="Proficiency Bonus" title="Proficiency Bonus" body="Added to attack rolls, ability checks, and saving throws you're proficient in. It grows as you level up (still +2 at level 1 — this whole app is level-1-only for now)." />}
+              label={<Tooltip label="Proficiency Bonus" title="Proficiency Bonus" body="Added to attack rolls, ability checks, and saving throws you're proficient in. Grows with level: +2 through level 4, +3 through 8, +4 through 12, +5 through 16, +6 from 17 on." />}
               value={`+${PROF_BONUS}`}
             />
             <div className="flex justify-between items-center text-base mb-1">

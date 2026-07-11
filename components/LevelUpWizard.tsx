@@ -17,6 +17,7 @@ type WizardCharacter = {
   subclass_id: string | null
   max_hp: number
   current_hp: number
+  initiative_bonus: number
   hit_dice_total: number
   hit_dice_remaining: number
   strength: number
@@ -365,6 +366,18 @@ export default function LevelUpWizard({
       ...abilityUpdates,
     }
     if (chosenSubclassId) characterUpdate.subclass_id = chosenSubclassId
+
+    // initiative_bonus is a stored value (dexMod + any flat bonus like Alert's +5), set once at
+    // creation and never recalculated since — a Dexterity ASI would otherwise leave it stale.
+    // Back out whatever flat bonus already exists and reapply it to the new Dex modifier, rather
+    // than assuming it's always exactly the Alert feat.
+    const oldDexMod = Math.floor((character.dexterity - 10) / 2)
+    const flatInitiativeBonus = character.initiative_bonus - oldDexMod
+    const newDexterity = abilityUpdates.dexterity ?? character.dexterity
+    const newDexMod = Math.floor((newDexterity - 10) / 2)
+    if (newDexMod !== oldDexMod) {
+      characterUpdate.initiative_bonus = newDexMod + flatInitiativeBonus
+    }
 
     const tasks: PromiseLike<unknown>[] = [
       supabase.from('characters').update(characterUpdate).eq('id', characterId),
