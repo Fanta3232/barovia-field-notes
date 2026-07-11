@@ -280,13 +280,15 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   async function longRest() {
     const hdRecover = Math.max(1, Math.floor((character?.hit_dice_total ?? 1) / 2))
     const nextHd = Math.min(character?.hit_dice_total ?? 1, (character?.hit_dice_remaining ?? 0) + hdRecover)
+    const nextExhaustion = Math.max(0, (character?.exhaustion_level ?? 0) - 1)
+    const maxHp = character?.max_hp ?? 0
     setSpellSlots((prev) => prev.map((s) => ({ ...s, used_slots: 0 })))
     setResources((prev) => prev.map((r) => ({ ...r, current_value: r.max_value })))
-    setCharacter((prev) => prev ? { ...prev, hit_dice_remaining: nextHd } : prev)
+    setCharacter((prev) => prev ? { ...prev, hit_dice_remaining: nextHd, exhaustion_level: nextExhaustion, current_hp: maxHp, temp_hp: 0 } : prev)
     await Promise.all([
       supabase.from('character_spell_slots').update({ used_slots: 0 }).eq('character_id', params.id),
       ...resources.map((r) => supabase.from('character_resources').update({ current_value: r.max_value }).eq('character_id', params.id).eq('name', r.name)),
-      supabase.from('characters').update({ hit_dice_remaining: nextHd }).eq('id', params.id),
+      supabase.from('characters').update({ hit_dice_remaining: nextHd, exhaustion_level: nextExhaustion, current_hp: maxHp, temp_hp: 0 }).eq('id', params.id),
     ])
   }
 
@@ -302,6 +304,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     const next = Math.max(0, (character?.hit_dice_remaining ?? 0) - 1)
     setCharacter((prev) => prev ? { ...prev, hit_dice_remaining: next } : prev)
     await supabase.from('characters').update({ hit_dice_remaining: next }).eq('id', params.id)
+  }
+
+  // Exhaustion is a 0-6 tiered track (2014 rules) — clamp both ends so it can't go negative
+  // or past the level-6 "death" cap.
+  async function adjustExhaustion(delta: number) {
+    const next = Math.max(0, Math.min(6, (character?.exhaustion_level ?? 0) + delta))
+    setCharacter((prev) => prev ? { ...prev, exhaustion_level: next } : prev)
+    await supabase.from('characters').update({ exhaustion_level: next }).eq('id', params.id)
   }
 
   // Clicking a death-save bubble fills it and every bubble before it; clicking an already-
@@ -761,7 +771,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               <Row label="Initiative" value={character.initiative_bonus >= 0 ? `+${character.initiative_bonus}` : String(character.initiative_bonus)} onClick={() => rollCheck('Initiative', character.initiative_bonus)} />
               <Row label="Speed" value={`${character.speed} ft`} />
               {spellSaveDC != null && <Row label="Spell DC" value={String(spellSaveDC)} />}
-              <Row label="Exhaustion" value={`${character.exhaustion_level} / 6`} />
+            </div>
+            <div className="flex justify-between items-center text-base mt-1.5 pt-1.5 border-t border-mist/30">
+              <span>Exhaustion</span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => adjustExhaustion(-1)} disabled={character.exhaustion_level <= 0} className="w-6 h-6 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">−</button>
+                <span>{character.exhaustion_level} / 6</span>
+                <button onClick={() => adjustExhaustion(1)} disabled={character.exhaustion_level >= 6} className="w-6 h-6 rounded-full border border-mist disabled:opacity-25 hover:border-candle text-base">+</button>
+              </div>
             </div>
           </div>
 
@@ -1026,10 +1043,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               label={<Tooltip label="Proficiency Bonus" title="Proficiency Bonus" body="Added to attack rolls, ability checks, and saving throws you're proficient in. It grows as you level up (still +2 at level 1 — this whole app is level-1-only for now)." />}
               value={`+${PROF_BONUS}`}
             />
-            <Row
-              label={<Tooltip label="Exhaustion" title="Exhaustion" body="2014 rules: a TIERED effects table, not a flat penalty. 1 disadvantage on ability checks, 2 speed halved, 3 disadvantage on attacks/saves, 4 HP max halved, 5 speed 0, 6 death." />}
-              value={`${character.exhaustion_level} / 6`}
-            />
+            <div className="flex justify-between items-center text-base mb-1">
+              <Tooltip label="Exhaustion" title="Exhaustion" body="2014 rules: a TIERED effects table, not a flat penalty. 1 disadvantage on ability checks, 2 speed halved, 3 disadvantage on attacks/saves, 4 HP max halved, 5 speed 0, 6 death. A long rest (with food and drink) removes one level." />
+              <div className="flex items-center gap-2">
+                <button onClick={() => adjustExhaustion(-1)} disabled={character.exhaustion_level <= 0} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">−</button>
+                <span>{character.exhaustion_level} / 6</span>
+                <button onClick={() => adjustExhaustion(1)} disabled={character.exhaustion_level >= 6} className="w-5 h-5 rounded-full border border-mist disabled:opacity-25 hover:border-candle hover:text-candle text-sm">+</button>
+              </div>
+            </div>
             <div className="mt-3 pt-3 border-t border-mist/40">
               <p className="text-xs text-parchment/40 uppercase tracking-wide text-center mb-2">Passive Scores (no roll needed)</p>
               <div className="grid grid-cols-2 gap-x-2 gap-y-2 text-center">
