@@ -577,6 +577,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const classFeat = charFeats.find((f) => f.source === 'class_feature_l1')
   const fightingStyleFeats = charFeats.filter((f) => f.feats.category === 'fighting_style' && f.source !== 'class_feature_l1')
   const invocationFeats = charFeats.filter((f) => f.feats.category === 'eldritch_invocation')
+  const metamagicFeats = charFeats.filter((f) => f.feats.category === 'metamagic')
   const variantFeat = charFeats.find((f) => f.source === 'variant_human')
   const allTraits = [
     ...(character.species?.traits ?? []),
@@ -1322,11 +1323,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
             {invocationFeats.map((f) => (
               <Tooltip key={f.feats.name} label={<span className="block text-base mb-1.5">{f.feats.name} <span className="text-parchment/40 text-sm">(Eldritch Invocation)</span></span>} title={f.feats.name} body={f.feats.description} block />
             ))}
+            {metamagicFeats.map((f) => (
+              <Tooltip key={f.feats.name} label={<span className="block text-base mb-1.5">{f.feats.name} <span className="text-parchment/40 text-sm">(Metamagic)</span></span>} title={f.feats.name} body={f.feats.description} block />
+            ))}
             {subclassL1Features.map((f) => (
               <Tooltip key={f.name} label={<span className="block text-base mb-1.5">{f.name}</span>} title={f.name} body={f.description} block />
             ))}
             {variantFeat && <Tooltip label={<span className="block text-base mb-1.5">{variantFeat.feats.name} <span className="text-parchment/40 text-sm">(Variant Human)</span></span>} title={variantFeat.feats.name} body={variantFeat.feats.description} block />}
-            {classFeatures.length === 0 && !classFeat && fightingStyleFeats.length === 0 && invocationFeats.length === 0 && subclassL1Features.length === 0 && !variantFeat && <p className="text-sm text-parchment/40 italic">None recorded.</p>}
+            {classFeatures.length === 0 && !classFeat && fightingStyleFeats.length === 0 && invocationFeats.length === 0 && metamagicFeats.length === 0 && subclassL1Features.length === 0 && !variantFeat && <p className="text-sm text-parchment/40 italic">None recorded.</p>}
           </div>
 
           <div className="panel rounded-sm p-4">

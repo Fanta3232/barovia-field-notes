@@ -98,6 +98,9 @@ export default function LevelUpWizard({
   const [invocationOptions, setInvocationOptions] = useState<FeatOption[]>([])
   const [invocationCount, setInvocationCount] = useState(0)
   const [chosenInvocationIds, setChosenInvocationIds] = useState<string[]>([])
+  const [metamagicOptions, setMetamagicOptions] = useState<FeatOption[]>([])
+  const [metamagicCount, setMetamagicCount] = useState(0)
+  const [chosenMetamagicIds, setChosenMetamagicIds] = useState<string[]>([])
   const [subclassOptions, setSubclassOptions] = useState<SubclassOption[]>([])
   const [chosenSubclassId, setChosenSubclassId] = useState<string | null>(null)
   const [asiChoice, setAsiChoice] = useState<'asi' | 'feat' | null>(null)
@@ -144,6 +147,16 @@ export default function LevelUpWizard({
         setInvocationOptions([])
         setInvocationCount(0)
       }
+
+      const metamagicFeature = ((featuresRes.data ?? []) as ClassFeature[]).find((f) => f.name === 'Metamagic')
+      if (metamagicFeature) {
+        const mmRes = await supabase.from('feats').select('id, name, description, prerequisite').eq('category', 'metamagic').order('name')
+        setMetamagicOptions((mmRes.data ?? []) as FeatOption[])
+        setMetamagicCount(2) // Sorcerers gain two Metamagic options at 3rd level, the only Metamagic-granting level in this range
+      } else {
+        setMetamagicOptions([])
+        setMetamagicCount(0)
+      }
       setLoading(false)
     }
     load()
@@ -151,6 +164,7 @@ export default function LevelUpWizard({
     setStep('hp'); setHpMethod(null); setRolledHp(null); setChosenSubclassId(null)
     setAsiChoice(null); setAsiMode('one'); setAsiPicks([]); setChosenFeatId(null); setChosenFightingStyleId(null)
     setChosenInvocationIds([])
+    setChosenMetamagicIds([])
   }, [open, character.class_id, newLevel, willUnlockSubclass, isASILevel])
 
   if (!open) return null
@@ -175,11 +189,19 @@ export default function LevelUpWizard({
     })
   }
 
+  function toggleMetamagicPick(id: string) {
+    setChosenMetamagicIds((prev) => {
+      if (prev.includes(id)) return prev.filter((i) => i !== id)
+      if (prev.length >= metamagicCount) return prev
+      return [...prev, id]
+    })
+  }
+
   const steps: typeof step[] = ['hp', 'features', ...(willUnlockSubclass ? ['subclass' as const] : []), ...(isASILevel ? ['asi' as const] : []), 'confirm']
   const stepIndex = steps.indexOf(step)
   const canAdvance =
     (step === 'hp' && hpMethod !== null && (hpMethod === 'average' || rolledHp !== null)) ||
-    (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount)) ||
+    (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount) && (metamagicCount === 0 || chosenMetamagicIds.length === metamagicCount)) ||
     (step === 'subclass' && chosenSubclassId !== null) ||
     (step === 'asi' && ((asiChoice === 'asi' && asiPicks.length === (asiMode === 'one' ? 1 : 2)) || (asiChoice === 'feat' && chosenFeatId !== null))) ||
     (step === 'confirm')
@@ -230,6 +252,11 @@ export default function LevelUpWizard({
     if (chosenInvocationIds.length > 0) {
       tasks.push(supabase.from('character_feats').insert(
         chosenInvocationIds.map((feat_id) => ({ character_id: characterId, feat_id, source: `eldritch_invocation_level_${newLevel}` }))
+      ))
+    }
+    if (chosenMetamagicIds.length > 0) {
+      tasks.push(supabase.from('character_feats').insert(
+        chosenMetamagicIds.map((feat_id) => ({ character_id: characterId, feat_id, source: `metamagic_level_${newLevel}` }))
       ))
     }
 
@@ -356,6 +383,28 @@ export default function LevelUpWizard({
                   </div>
                 </div>
               )}
+              {metamagicCount > 0 && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">
+                    Choose {metamagicCount} Metamagic options ({chosenMetamagicIds.length} / {metamagicCount} picked):
+                  </p>
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {metamagicOptions.map((f) => {
+                      const picked = chosenMetamagicIds.includes(f.id)
+                      const disabled = !picked && chosenMetamagicIds.length >= metamagicCount
+                      return (
+                        <label key={f.id} className={`block border rounded-sm p-2.5 cursor-pointer transition-colors ${picked ? 'border-candle' : 'border-mist hover:border-candle/50'} ${disabled ? 'opacity-40' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            <input type="checkbox" disabled={disabled} checked={picked} onChange={() => toggleMetamagicPick(f.id)} />
+                            <span className="text-base text-candle">{f.name}</span>
+                          </div>
+                          <p className="text-sm text-parchment/60 ml-6 leading-snug">{f.description}</p>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -449,6 +498,7 @@ export default function LevelUpWizard({
                 {newFeatures.length > 0 && <li>New features: {newFeatures.map((f) => f.name).join(', ')}</li>}
                 {chosenFightingStyleId && <li>Fighting Style: {fightingStyleOptions.find((f) => f.id === chosenFightingStyleId)?.name}</li>}
                 {chosenInvocationIds.length > 0 && <li>Eldritch Invocations: {chosenInvocationIds.map((id) => invocationOptions.find((f) => f.id === id)?.name).join(', ')}</li>}
+                {chosenMetamagicIds.length > 0 && <li>Metamagic: {chosenMetamagicIds.map((id) => metamagicOptions.find((f) => f.id === id)?.name).join(', ')}</li>}
                 {chosenSubclassId && <li>Subclass: {subclassOptions.find((s) => s.id === chosenSubclassId)?.name}</li>}
                 {asiChoice === 'asi' && <li>Ability increase: {asiPicks.map((a) => ABILITY_LABELS[a]).join(', ')}</li>}
                 {asiChoice === 'feat' && <li>Feat: {availableFeats.find((f) => f.id === chosenFeatId)?.name}</li>}
