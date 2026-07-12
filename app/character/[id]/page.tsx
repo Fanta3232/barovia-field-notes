@@ -583,6 +583,27 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const equippedWeapons = inventory.filter((r) => r.equipped && r.items?.category === 'weapon')
   const cantrips = charSpells.filter((s) => s.spells.level === 0)
   const knownSpells = charSpells.filter((s) => s.spells.level > 0)
+
+  // Spells/cantrips known limits (SRD 5.1, verified per-class) — shown as a budget hint next to
+  // the Spells panel so nobody has to look up "how many spells should I know at level 9" mid-session.
+  const CANTRIPS_KNOWN: Record<string, number[]> = {
+    // index 0 = level 1
+    Bard: [2,2,2,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4],
+    Cleric: [3,3,3,4,4,4,4,4,4,5,5,5,5,5,5,5,5,5,5,5],
+    Druid: [2,2,2,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4],
+    Sorcerer: [4,4,4,5,5,5,5,5,5,6,6,6,6,6,6,6,6,6,6,6],
+    Warlock: [2,2,2,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4],
+    Wizard: [3,3,3,4,4,4,4,4,4,5,5,5,5,5,5,5,5,5,5,5],
+  }
+  const SPELLS_KNOWN: Record<string, number[]> = {
+    Bard: [4,5,6,7,8,9,10,11,12,14,15,15,16,18,19,19,20,22,22,22],
+    Ranger: [0,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11],
+    Sorcerer: [2,3,4,5,6,7,8,9,10,11,12,12,13,13,14,14,15,15,15,15],
+    Warlock: [2,3,4,5,6,7,8,9,10,10,11,11,12,12,13,13,14,14,15,15],
+  }
+  const cantripLimit = character.class?.name ? CANTRIPS_KNOWN[character.class.name]?.[character.level - 1] : undefined
+  const knownCasterLimit = character.class?.name ? SPELLS_KNOWN[character.class.name]?.[character.level - 1] : undefined
+  const isPreparedCaster = ['Cleric', 'Druid', 'Paladin', 'Wizard'].includes(character.class?.name ?? '')
   const classFeat = charFeats.find((f) => f.source === 'class_feature_l1')
   const fightingStyleFeats = charFeats.filter((f) => f.feats.category === 'fighting_style' && f.source !== 'class_feature_l1')
   const invocationFeats = charFeats.filter((f) => f.feats.category === 'eldritch_invocation')
@@ -709,6 +730,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   // Spell Save DC — only shown for actual casters. Uses the level-derived PROF_BONUS above.
   const spellcastingAbility = character.class?.spellcasting_ability?.toLowerCase() as (typeof ABILITIES)[number] | undefined
   const spellSaveDC = spellcastingAbility ? 8 + PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2) : null
+
+  // Prepared casters (Cleric/Druid/Paladin/Wizard) get to prepare ability modifier + level
+  // spells each day — an exact formula, unlike the "known" casters' fixed table above.
+  const preparedLimit = isPreparedCaster && spellcastingAbility
+    ? Math.max(1, character.level + Math.floor((character[spellcastingAbility] - 10) / 2))
+    : undefined
+  const preparedCount = knownSpells.filter((s) => s.is_prepared && !s.is_always_known).length
 
   // Flattened, display-ready list of weapon proficiencies — whole categories first (Simple/
   // Martial Weapons), then any individually named weapons (e.g. a Bard's Rapier, Longsword).
@@ -1520,7 +1548,32 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
 
         <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
           <div className="panel rounded-sm p-4">
-            <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Spells</h2>
+            <div className="flex items-baseline justify-between mb-3">
+              <h2 className="font-display text-base text-candle uppercase tracking-wide">Spells</h2>
+              <div className="flex gap-3 text-sm text-parchment/50">
+                {cantripLimit != null && (
+                  <Tooltip
+                    label={<span className={cantrips.length > cantripLimit ? 'text-blood-bright' : ''}>Cantrips {cantrips.length}/{cantripLimit}</span>}
+                    title="Cantrips Known"
+                    body="How many cantrips your class lets you know at this level — grows at certain levels (usually 4th and 10th). This is a budget hint, not an enforced limit; nothing stops you from adding more."
+                  />
+                )}
+                {knownCasterLimit != null && (
+                  <Tooltip
+                    label={<span className={knownSpells.length > knownCasterLimit ? 'text-blood-bright' : ''}>Known {knownSpells.length}/{knownCasterLimit}</span>}
+                    title="Spells Known"
+                    body="Your class learns a fixed number of spells as you level, rather than preparing from the full list each day. This is a budget hint, not an enforced limit."
+                  />
+                )}
+                {preparedLimit != null && (
+                  <Tooltip
+                    label={<span className={preparedCount > preparedLimit ? 'text-blood-bright' : ''}>Prepared {preparedCount}/{preparedLimit}</span>}
+                    title="Spells Prepared"
+                    body="Your class prepares a number of spells equal to your spellcasting ability modifier + your level, chosen fresh after each long rest from your full spell list. This is a budget hint, not an enforced limit."
+                  />
+                )}
+              </div>
+            </div>
             {spellSlots.length > 0 && (
               <div className="mb-3 pb-3 border-b border-mist/50">
                 {spellSlots.map((sl) => (
