@@ -79,6 +79,21 @@ type CharConditionRow = { condition_id: string; conditions: { name: string; desc
 // this as leveling adds more toggleable abilities (Wild Shape, Divine Smite readiness, etc.).
 // Descriptions are generated per-level below (rageDamageBonus/sneakAttackDice) since both
 // Rage's damage bonus and Sneak Attack's dice actually scale as the character levels up.
+// Exhaustion's tiered effects are cumulative — level 3 includes levels 1 and 2's effects too.
+// Used to auto-populate a Status Effects pill straight from the numeric tracker instead of
+// requiring a separate, disconnected manual toggle for the same condition.
+const EXHAUSTION_TIERS = [
+  'Disadvantage on ability checks',
+  'Speed halved',
+  'Disadvantage on attack rolls and saving throws',
+  'Hit point maximum halved',
+  'Speed reduced to 0',
+  'Death',
+]
+function exhaustionEffectDescription(level: number): string {
+  return EXHAUSTION_TIERS.slice(0, level).map((t, i) => `${i + 1}. ${t}`).join(' · ')
+}
+
 function rageDamageBonus(level: number): number {
   return level >= 16 ? 4 : level >= 9 ? 3 : 2
 }
@@ -500,7 +515,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
     const amount = Math.max(0, parseInt(hpAdjust) || 0)
     if (amount === 0) return
     const wasAtZero = character!.current_hp <= 0
-    const newCurrent = Math.min(character!.max_hp, character!.current_hp + amount)
+    const newCurrent = Math.min(effectiveMaxHp, character!.current_hp + amount)
     const updates: Record<string, any> = { current_hp: newCurrent }
     // Regaining any HP while at 0 clears death saves and wakes you up — also a real rule,
     // not just a convenience reset.
@@ -727,6 +742,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const speedBonus = computeSpeedBonus()
   const currentSpeed = character.speed + speedBonus
 
+  // Exhaustion level 4+ halves HP maximum — a real rule that, like AC and Speed above, was
+  // never actually reflected in the displayed number even though the exhaustion tracker existed.
+  const effectiveMaxHp = character.exhaustion_level >= 4 ? Math.floor(character.max_hp / 2) : character.max_hp
+
   // Spell Save DC — only shown for actual casters. Uses the level-derived PROF_BONUS above.
   const spellcastingAbility = character.class?.spellcasting_ability?.toLowerCase() as (typeof ABILITIES)[number] | undefined
   const spellSaveDC = spellcastingAbility ? 8 + PROF_BONUS + Math.floor((character[spellcastingAbility] - 10) / 2) : null
@@ -832,7 +851,7 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="panel rounded-sm p-4">
             <div className="flex justify-between items-center text-lg mb-2">
               <span>HP</span>
-              <span>{character.current_hp} / {character.max_hp}{character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}</span>
+              <span>{character.current_hp} / {effectiveMaxHp}{effectiveMaxHp !== character.max_hp ? ' (exhausted)' : ''}{character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}</span>
             </div>
             <div className="flex gap-1.5 mb-3">
               <input
@@ -899,10 +918,13 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               <h2 className="font-display text-base text-candle uppercase tracking-wide">Status Effects</h2>
               <button onClick={() => setStatusModalOpen(true)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-3 py-1">Manage</button>
             </div>
-            {charConditions.length === 0 ? (
+            {charConditions.length === 0 && character.exhaustion_level === 0 ? (
               <p className="text-sm text-parchment/40 italic">None currently applied.</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
+                {character.exhaustion_level > 0 && (
+                  <span className="wax-seal text-sm px-2.5 py-1 rounded-full">Exhaustion {character.exhaustion_level}</span>
+                )}
                 {charConditions.map((c) => (
                   <span key={c.condition_id} className="wax-seal text-sm px-2.5 py-1 rounded-full">{c.conditions.name}</span>
                 ))}
@@ -1085,7 +1107,10 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
           <div className="space-y-4">
           <div className="panel rounded-sm p-4">
             <h2 className="font-display text-base text-candle mb-3 uppercase tracking-wide">Vitals</h2>
-            <Row label="HP" value={`${character.current_hp} / ${character.max_hp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`} />
+            <Row
+              label={effectiveMaxHp !== character.max_hp ? <Tooltip label="HP" title="Hit Points" body={`Halved from ${character.max_hp} due to Exhaustion level 4+. Recovers automatically once exhaustion drops below 4 — no action needed here.`} /> : 'HP'}
+              value={`${character.current_hp} / ${effectiveMaxHp}${character.temp_hp > 0 ? ` (+${character.temp_hp})` : ''}`}
+            />
             <div className="flex gap-1.5 mb-2.5">
               <input
                 type="number"
@@ -1223,10 +1248,17 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               <h2 className="font-display text-base text-candle uppercase tracking-wide">Status Effects</h2>
               <button onClick={() => setStatusModalOpen(true)} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5">Manage</button>
             </div>
-            {charConditions.length === 0 ? (
+            {charConditions.length === 0 && character.exhaustion_level === 0 ? (
               <p className="text-sm text-parchment/40 italic">None currently applied.</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
+                {character.exhaustion_level > 0 && (
+                  <Tooltip
+                    label={<span className="wax-seal text-sm px-2 py-1 rounded-full inline-block">Exhaustion {character.exhaustion_level}</span>}
+                    title={`Exhaustion ${character.exhaustion_level}`}
+                    body={`${exhaustionEffectDescription(character.exhaustion_level)}. Adjust with the +/- next to Exhaustion in Vitals.`}
+                  />
+                )}
                 {charConditions.map((c) => (
                   <Tooltip
                     key={c.condition_id}
