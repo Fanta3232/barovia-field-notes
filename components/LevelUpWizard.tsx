@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Modal from '@/components/Modal'
+import { ALL_SKILLS } from '@/lib/types'
 
 const ABILITY_LABELS: Record<string, string> = {
   strength: 'Strength', dexterity: 'Dexterity', constitution: 'Constitution',
@@ -171,6 +172,7 @@ export default function LevelUpWizard({
   const [expertiseSkillOptions, setExpertiseSkillOptions] = useState<string[]>([])
   const [expertiseCount, setExpertiseCount] = useState(0)
   const [chosenExpertiseSkills, setChosenExpertiseSkills] = useState<string[]>([])
+  const [proficientSkillNames, setProficientSkillNames] = useState<string[]>([])
   const [subclassOptions, setSubclassOptions] = useState<SubclassOption[]>([])
   const [chosenSubclassId, setChosenSubclassId] = useState<string | null>(null)
   const [asiChoice, setAsiChoice] = useState<'asi' | 'feat' | null>(null)
@@ -178,6 +180,8 @@ export default function LevelUpWizard({
   const [asiPicks, setAsiPicks] = useState<string[]>([])
   const [availableFeats, setAvailableFeats] = useState<FeatOption[]>([])
   const [chosenFeatId, setChosenFeatId] = useState<string | null>(null)
+  const [featAbilityChoice, setFeatAbilityChoice] = useState<string | null>(null)
+  const [featSkillChoices, setFeatSkillChoices] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -236,12 +240,16 @@ export default function LevelUpWizard({
         setMetamagicCount(0)
       }
 
+      // Every row in character_skills already represents a proficient skill (no separate
+      // "proficient" filter needed). Fetched unconditionally since both Expertise (needs
+      // proficient, non-expertise skills) and the Skilled feat (needs NON-proficient skills)
+      // depend on knowing what's already on the sheet.
+      const skillsRes = await supabase.from('character_skills').select('skill_name, expertise').eq('character_id', characterId)
+      const allProficientSkillNames = ((skillsRes.data ?? []) as { skill_name: string; expertise: boolean }[]).map((s) => s.skill_name)
+      setProficientSkillNames(allProficientSkillNames)
+
       const expertiseFeature = ((featuresRes.data ?? []) as ClassFeature[]).find((f) => f.name === 'Expertise')
       if (expertiseFeature) {
-        // Every row in character_skills already represents a proficient skill (no separate
-        // "proficient" filter needed) — Expertise can only double a skill you're already
-        // proficient in, and one that isn't already at Expertise.
-        const skillsRes = await supabase.from('character_skills').select('skill_name, expertise').eq('character_id', characterId)
         setExpertiseSkillOptions(((skillsRes.data ?? []) as { skill_name: string; expertise: boolean }[]).filter((s) => !s.expertise).map((s) => s.skill_name))
         setExpertiseCount(2)
       } else {
@@ -254,6 +262,7 @@ export default function LevelUpWizard({
     // Reset wizard state each time it's opened fresh.
     setStep('hp'); setHpMethod(null); setRolledHp(null); setChosenSubclassId(null)
     setAsiChoice(null); setAsiMode('one'); setAsiPicks([]); setChosenFeatId(null); setChosenFightingStyleId(null)
+    setFeatAbilityChoice(null); setFeatSkillChoices([])
     setChosenInvocationIds([])
     setChosenMetamagicIds([])
     setChosenExpertiseSkills([])
@@ -312,11 +321,17 @@ export default function LevelUpWizard({
 
   const steps: typeof step[] = ['hp', 'features', ...(willUnlockSubclass ? ['subclass' as const] : []), ...(isASILevel ? ['asi' as const] : []), 'confirm']
   const stepIndex = steps.indexOf(step)
+  const chosenFeatName = availableFeats.find((f) => f.id === chosenFeatId)?.name
+  const featNeedsAbilityChoice = chosenFeatName === 'Resilient' || chosenFeatName === 'Athlete'
+  const featNeedsSkillChoice = chosenFeatName === 'Skilled'
   const canAdvance =
     (step === 'hp' && hpMethod !== null && (hpMethod === 'average' || rolledHp !== null)) ||
     (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount) && (metamagicCount === 0 || chosenMetamagicIds.length === metamagicCount) && (expertiseCount === 0 || chosenExpertiseSkills.length === expertiseCount)) ||
     (step === 'subclass' && chosenSubclassId !== null) ||
-    (step === 'asi' && ((asiChoice === 'asi' && asiPicks.length === (asiMode === 'one' ? 1 : 2)) || (asiChoice === 'feat' && chosenFeatId !== null))) ||
+    (step === 'asi' && (
+      (asiChoice === 'asi' && asiPicks.length === (asiMode === 'one' ? 1 : 2)) ||
+      (asiChoice === 'feat' && chosenFeatId !== null && (!featNeedsAbilityChoice || featAbilityChoice !== null) && (!featNeedsSkillChoice || featSkillChoices.length === 3))
+    )) ||
     (step === 'confirm')
 
   function goNext() {
@@ -344,6 +359,13 @@ export default function LevelUpWizard({
       abilityUpdates.strength = Math.min(24, (abilityUpdates.strength ?? character.strength) + 4)
       abilityUpdates.constitution = Math.min(24, (abilityUpdates.constitution ?? character.constitution) + 4)
     }
+    // Resilient and Athlete both grant +1 to a chosen ability score — applied here (before the
+    // retroactive Constitution HP check below) so picking Resilient on Constitution correctly
+    // triggers that rule too, not just an ASI.
+    if (asiChoice === 'feat' && (chosenFeatName === 'Resilient' || chosenFeatName === 'Athlete') && featAbilityChoice) {
+      const current = abilityUpdates[featAbilityChoice] ?? (character as any)[featAbilityChoice]
+      abilityUpdates[featAbilityChoice] = Math.min(20, current + 1)
+    }
 
     // "When your Constitution modifier increases by 1, your hit point maximum increases by 1
     // for each level you have attained" (PHB) — an easy rule to miss since it's retroactive
@@ -366,16 +388,21 @@ export default function LevelUpWizard({
       ...abilityUpdates,
     }
     if (chosenSubclassId) characterUpdate.subclass_id = chosenSubclassId
+    if (asiChoice === 'feat' && chosenFeatName === 'Resilient' && featAbilityChoice) {
+      characterUpdate.resilient_ability = featAbilityChoice
+    }
 
     // initiative_bonus is a stored value (dexMod + any flat bonus like Alert's +5), set once at
     // creation and never recalculated since — a Dexterity ASI would otherwise leave it stale.
     // Back out whatever flat bonus already exists and reapply it to the new Dex modifier, rather
-    // than assuming it's always exactly the Alert feat.
+    // than assuming it's always exactly the Alert feat. Also add Alert's +5 fresh if it's being
+    // picked for the first time this level-up.
     const oldDexMod = Math.floor((character.dexterity - 10) / 2)
-    const flatInitiativeBonus = character.initiative_bonus - oldDexMod
+    const newlyPickedAlert = asiChoice === 'feat' && chosenFeatName === 'Alert' ? 5 : 0
+    const flatInitiativeBonus = (character.initiative_bonus - oldDexMod) + newlyPickedAlert
     const newDexterity = abilityUpdates.dexterity ?? character.dexterity
     const newDexMod = Math.floor((newDexterity - 10) / 2)
-    if (newDexMod !== oldDexMod) {
+    if (newDexMod !== oldDexMod || newlyPickedAlert > 0) {
       characterUpdate.initiative_bonus = newDexMod + flatInitiativeBonus
     }
 
@@ -401,6 +428,11 @@ export default function LevelUpWizard({
     }
     for (const skill of chosenExpertiseSkills) {
       tasks.push(supabase.from('character_skills').update({ expertise: true }).eq('character_id', characterId).eq('skill_name', skill))
+    }
+    if (asiChoice === 'feat' && chosenFeatName === 'Skilled' && featSkillChoices.length > 0) {
+      tasks.push(supabase.from('character_skills').insert(
+        featSkillChoices.map((skill_name) => ({ character_id: characterId, skill_name, expertise: false }))
+      ))
     }
 
     // Spell slot recalculation, if this class casts spells.
@@ -668,13 +700,57 @@ export default function LevelUpWizard({
                   {availableFeats.map((f) => (
                     <label key={f.id} className={`block border rounded-sm p-2.5 cursor-pointer transition-colors ${chosenFeatId === f.id ? 'border-candle' : 'border-mist hover:border-candle/50'}`}>
                       <div className="flex items-center gap-2">
-                        <input type="radio" name="feat" checked={chosenFeatId === f.id} onChange={() => setChosenFeatId(f.id)} />
+                        <input type="radio" name="feat" checked={chosenFeatId === f.id} onChange={() => { setChosenFeatId(f.id); setFeatAbilityChoice(null); setFeatSkillChoices([]) }} />
                         <span className="text-base text-candle">{f.name}</span>
                         {f.prerequisite && <span className="text-xs text-parchment/40">({f.prerequisite})</span>}
                       </div>
                       <p className="text-sm text-parchment/60 ml-6 leading-snug">{f.description}</p>
                     </label>
                   ))}
+                </div>
+              )}
+              {featNeedsAbilityChoice && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">Choose which ability score gets +1:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {ABILITIES.map((a) => {
+                      const current = (character as any)[a] as number
+                      const wouldExceed = current + 1 > 20
+                      return (
+                        <button
+                          key={a}
+                          disabled={wouldExceed}
+                          onClick={() => setFeatAbilityChoice(a)}
+                          className={`border rounded-sm py-2 text-sm transition-colors disabled:opacity-30 ${featAbilityChoice === a ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+                        >
+                          {ABILITY_LABELS[a]} ({current} → {current + 1})
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              {featNeedsSkillChoice && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">
+                    Choose 3 skills to gain proficiency in ({featSkillChoices.length} / 3 picked — tool proficiencies from this feat aren't tracked yet):
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {ALL_SKILLS.filter((sk) => !proficientSkillNames.includes(sk)).map((sk) => {
+                      const picked = featSkillChoices.includes(sk)
+                      const disabled = !picked && featSkillChoices.length >= 3
+                      return (
+                        <button
+                          key={sk}
+                          disabled={disabled}
+                          onClick={() => setFeatSkillChoices((prev) => picked ? prev.filter((s) => s !== sk) : prev.length >= 3 ? prev : [...prev, sk])}
+                          className={`border rounded-sm py-2 text-sm transition-colors disabled:opacity-30 ${picked ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+                        >
+                          {sk}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -697,6 +773,8 @@ export default function LevelUpWizard({
                 {chosenSubclassId && <li>Subclass: {subclassOptions.find((s) => s.id === chosenSubclassId)?.name}</li>}
                 {asiChoice === 'asi' && <li>Ability increase: {asiPicks.map((a) => ABILITY_LABELS[a]).join(', ')}</li>}
                 {asiChoice === 'feat' && <li>Feat: {availableFeats.find((f) => f.id === chosenFeatId)?.name}</li>}
+                {featNeedsAbilityChoice && featAbilityChoice && <li>{ABILITY_LABELS[featAbilityChoice]} +1</li>}
+                {featNeedsSkillChoice && featSkillChoices.length > 0 && <li>New skill proficiencies: {featSkillChoices.join(', ')}</li>}
                 {character.class?.name === 'Barbarian' && newLevel === 20 && <li>Primal Champion: Strength and Constitution +4 (max 24)</li>}
               </ul>
               <button
