@@ -599,6 +599,32 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
   const cantrips = charSpells.filter((s) => s.spells.level === 0)
   const knownSpells = charSpells.filter((s) => s.spells.level > 0)
 
+  // Eldritch Invocations that modify Eldritch Blast rather than granting a separate spell —
+  // shown as tags on the cantrip itself so it's clear it's not just plain Eldritch Blast anymore.
+  const ELDRITCH_BLAST_MODIFIERS: Record<string, string> = {
+    'Agonizing Blast': 'adds your Charisma modifier to each beam\u2019s damage',
+    'Eldritch Spear': 'range extended to 300 feet',
+    'Repelling Blast': 'a hit pushes the target up to 10 feet away',
+  }
+  const activeBlastMods = charFeats.filter((f) => f.feats.name in ELDRITCH_BLAST_MODIFIERS)
+
+  // Invocations that grant an at-will casting of a specific spell, no slot required — these
+  // were being routed through the normal slot-consuming Cast button, which is wrong.
+  const INVOCATION_AT_WILL_SPELLS: Record<string, string> = {
+    'Armor of Shadows': 'Mage Armor',
+    'Beast Speech': 'Speak with Animals',
+    'Eldritch Sight': 'Detect Magic',
+    'Fiendish Vigor': 'False Life',
+    'Mask of Many Faces': 'Disguise Self',
+    'Misty Visions': 'Silent Image',
+  }
+  const atWillSpellNames = new Set(
+    charFeats.filter((f) => f.feats.name in INVOCATION_AT_WILL_SPELLS).map((f) => INVOCATION_AT_WILL_SPELLS[f.feats.name])
+  )
+  function atWillSourceFor(spellName: string): string | undefined {
+    return charFeats.find((f) => INVOCATION_AT_WILL_SPELLS[f.feats.name] === spellName)?.feats.name
+  }
+
   // Spells/cantrips known limits (SRD 5.1, verified per-class) — shown as a budget hint next to
   // the Spells panel so nobody has to look up "how many spells should I know at level 9" mid-session.
   const CANTRIPS_KNOWN: Record<string, number[]> = {
@@ -1624,20 +1650,47 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
               <p className="text-sm text-parchment/40 italic">{character.class?.spellcasting_type ? 'No spells selected (or your class doesn\u2019t cast until a later level).' : 'Non-caster — no spell panel needed.'}</p>
             ) : (
               <>
-                {cantrips.map((s) => (
-                  <Tooltip key={s.spells.name} label={<span className="block text-base mb-1.5">{s.spells.name} <span className="text-parchment/40 text-sm">(cantrip)</span></span>} title={s.spells.name} subtitle={`Cantrip · ${s.spells.school}`} body={s.spells.description} block />
-                ))}
+                {cantrips.map((s) => {
+                  const blastMods = s.spells.name === 'Eldritch Blast' ? activeBlastMods : []
+                  return (
+                    <Tooltip
+                      key={s.spells.name}
+                      label={
+                        <span className="block text-base mb-1.5">
+                          {s.spells.name} <span className="text-parchment/40 text-sm">(cantrip)</span>
+                          {blastMods.map((m) => <span key={m.feats.name} className="text-candle text-sm"> · {m.feats.name}</span>)}
+                        </span>
+                      }
+                      title={s.spells.name}
+                      subtitle={`Cantrip · ${s.spells.school}`}
+                      body={blastMods.length > 0 ? `${s.spells.description} Modified by: ${blastMods.map((m) => `${m.feats.name} (${ELDRITCH_BLAST_MODIFIERS[m.feats.name]})`).join('; ')}.` : s.spells.description}
+                      block
+                    />
+                  )
+                })}
                 {knownSpells.map((s) => {
                   const matchingSlot = spellSlots.find((sl) => sl.slot_level === s.spells.level)
                   const canCast = matchingSlot ? matchingSlot.used_slots < matchingSlot.max_slots : false
+                  const atWillSource = atWillSourceFor(s.spells.name)
                   return (
                     <div key={s.spells.name} className="flex items-center justify-between mb-1.5">
-                      <Tooltip label={<span className="text-base">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-sm"> (always prepared)</span> : ''}</span>} title={s.spells.name} subtitle={`Level ${s.spells.level} · ${s.spells.school}`} body={s.spells.description} />
-                      {matchingSlot && (
+                      <Tooltip
+                        label={<span className="text-base">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-sm"> (always prepared)</span> : ''}</span>}
+                        title={s.spells.name}
+                        subtitle={`Level ${s.spells.level} · ${s.spells.school}`}
+                        body={atWillSource ? `${s.spells.description} Cast at will, no spell slot needed, via the ${atWillSource} invocation.` : s.spells.description}
+                      />
+                      {atWillSource ? (
+                        <Tooltip
+                          label={<span className="text-sm text-candle border border-mist rounded-full px-2 py-0.5 inline-block">At will</span>}
+                          title="At-Will Casting"
+                          body={`Granted by the ${atWillSource} invocation — cast this as often as you like, no spell slot required.`}
+                        />
+                      ) : matchingSlot ? (
                         <button onClick={() => adjustSlot(s.spells.level, 1)} disabled={!canCast} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle">
                           Cast
                         </button>
-                      )}
+                      ) : null}
                     </div>
                   )
                 })}
