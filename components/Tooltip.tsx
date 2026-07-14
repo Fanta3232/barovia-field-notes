@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, ReactNode } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, ReactNode } from 'react'
 
 type TooltipProps = {
   label: ReactNode          // the word/phrase in the sheet, e.g. spell name
@@ -21,9 +21,34 @@ export default function Tooltip({ label, title, subtitle, body, className, block
   const [isTouch, setIsTouch] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
 
+  // Popups near the bottom (or edges) of the viewport used to always render below/centered
+  // regardless of available space — clipping off-screen, which grows the page's scroll height,
+  // which shifts the mouse relative to the trigger, which fires onMouseLeave, closing the
+  // popup, shrinking the page back, and re-triggering onMouseEnter. That open/close flicker
+  // loop is fixed by flipping placement based on actual available space before it ever renders
+  // visibly (useLayoutEffect runs before paint, so there's no visible jump).
+  const [vertical, setVertical] = useState<'below' | 'above'>('below')
+  const [horizontal, setHorizontal] = useState<'center' | 'left' | 'right'>('center')
+
   useEffect(() => {
     setIsTouch(window.matchMedia('(pointer: coarse)').matches)
   }, [])
+
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return
+    const rect = ref.current.getBoundingClientRect()
+    const estimatedHalfWidth = 144 // w-72 = 288px wide, half of that
+    const spaceBelow = window.innerHeight - rect.bottom
+    const spaceAbove = rect.top
+    // Whichever side has more room wins — simpler and more reliable than guessing a fixed
+    // popup height, since longer descriptions (spell mechanics, feature text) made a fixed
+    // threshold too small and it kept "below" even when there wasn't really room for it.
+    setVertical(spaceAbove > spaceBelow ? 'above' : 'below')
+    const centerX = rect.left + rect.width / 2
+    if (centerX < estimatedHalfWidth) setHorizontal('left')
+    else if (window.innerWidth - centerX < estimatedHalfWidth) setHorizontal('right')
+    else setHorizontal('center')
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -37,6 +62,9 @@ export default function Tooltip({ label, title, subtitle, body, className, block
   const triggerProps = isTouch
     ? { onClick: () => setOpen((o) => !o) }
     : { onMouseEnter: () => setOpen(true), onMouseLeave: () => setOpen(false) }
+
+  const verticalClass = vertical === 'below' ? 'top-full mt-2' : 'bottom-full mb-2'
+  const horizontalClass = horizontal === 'center' ? 'left-1/2 -translate-x-1/2' : horizontal === 'left' ? 'left-0' : 'right-0'
 
   return (
     <span className={`relative ${block ? 'block mb-2.5' : 'inline-block'}`} ref={ref}>
@@ -55,7 +83,7 @@ export default function Tooltip({ label, title, subtitle, body, className, block
       {open && (
         <span
           role="tooltip"
-          className="panel absolute z-50 left-1/2 -translate-x-1/2 top-full mt-2 w-72 rounded-sm p-3 text-left shadow-seal"
+          className={`panel absolute z-50 ${horizontalClass} ${verticalClass} w-72 max-h-[70vh] overflow-y-auto rounded-sm p-3 text-left shadow-seal`}
         >
           <span className="block font-display text-sm text-candle mb-1">{title}</span>
           {subtitle && (
