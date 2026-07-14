@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Modal from '@/components/Modal'
-import { ALL_SKILLS } from '@/lib/types'
+import { ALL_SKILLS, FAVORED_ENEMY_TYPES, FAVORED_TERRAIN_TYPES } from '@/lib/types'
 
 const ABILITY_LABELS: Record<string, string> = {
   strength: 'Strength', dexterity: 'Dexterity', constitution: 'Constitution',
@@ -37,6 +37,8 @@ type WizardCharacter = {
   subclassName: string | null
   subraceName: string | null
   hasToughFeat: boolean
+  favored_enemy: string | null
+  favored_terrain: string | null
 }
 
 type ClassFeature = { name: string; description: string }
@@ -173,6 +175,8 @@ export default function LevelUpWizard({
   const [expertiseCount, setExpertiseCount] = useState(0)
   const [chosenExpertiseSkills, setChosenExpertiseSkills] = useState<string[]>([])
   const [proficientSkillNames, setProficientSkillNames] = useState<string[]>([])
+  const [chosenFavoredEnemy, setChosenFavoredEnemy] = useState<string | null>(null)
+  const [chosenFavoredTerrain, setChosenFavoredTerrain] = useState<string | null>(null)
   const [subclassOptions, setSubclassOptions] = useState<SubclassOption[]>([])
   const [chosenSubclassId, setChosenSubclassId] = useState<string | null>(null)
   const [asiChoice, setAsiChoice] = useState<'asi' | 'feat' | null>(null)
@@ -265,6 +269,7 @@ export default function LevelUpWizard({
     setFeatAbilityChoice(null); setFeatSkillChoices([])
     setChosenInvocationIds([])
     setChosenMetamagicIds([])
+    setChosenFavoredEnemy(null); setChosenFavoredTerrain(null)
     setChosenExpertiseSkills([])
   }, [open, character.class_id, newLevel, willUnlockSubclass, isASILevel])
 
@@ -324,9 +329,16 @@ export default function LevelUpWizard({
   const chosenFeatName = availableFeats.find((f) => f.id === chosenFeatId)?.name
   const featNeedsAbilityChoice = chosenFeatName === 'Resilient' || chosenFeatName === 'Athlete'
   const featNeedsSkillChoice = chosenFeatName === 'Skilled'
+  // Ranger gains an additional Favored Enemy at 6th and 14th level, and an additional Favored
+  // Terrain at 6th and 10th — the character sheet only ever displays one comma-separated string
+  // for each, so new picks are appended rather than needing a schema change.
+  const needsFavoredEnemy = character.class?.name === 'Ranger' && (newLevel === 6 || newLevel === 14)
+  const needsFavoredTerrain = character.class?.name === 'Ranger' && (newLevel === 6 || newLevel === 10)
+  const alreadyChosenEnemies = (character.favored_enemy ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  const alreadyChosenTerrains = (character.favored_terrain ?? '').split(',').map((s) => s.trim()).filter(Boolean)
   const canAdvance =
     (step === 'hp' && hpMethod !== null && (hpMethod === 'average' || rolledHp !== null)) ||
-    (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount) && (metamagicCount === 0 || chosenMetamagicIds.length === metamagicCount) && (expertiseCount === 0 || chosenExpertiseSkills.length === expertiseCount)) ||
+    (step === 'features' && (fightingStyleOptions.length === 0 || chosenFightingStyleId !== null) && (invocationCount === 0 || chosenInvocationIds.length === invocationCount) && (metamagicCount === 0 || chosenMetamagicIds.length === metamagicCount) && (expertiseCount === 0 || chosenExpertiseSkills.length === expertiseCount) && (!needsFavoredEnemy || chosenFavoredEnemy !== null) && (!needsFavoredTerrain || chosenFavoredTerrain !== null)) ||
     (step === 'subclass' && chosenSubclassId !== null) ||
     (step === 'asi' && (
       (asiChoice === 'asi' && asiPicks.length === (asiMode === 'one' ? 1 : 2)) ||
@@ -390,6 +402,12 @@ export default function LevelUpWizard({
     if (chosenSubclassId) characterUpdate.subclass_id = chosenSubclassId
     if (asiChoice === 'feat' && chosenFeatName === 'Resilient' && featAbilityChoice) {
       characterUpdate.resilient_ability = featAbilityChoice
+    }
+    if (needsFavoredEnemy && chosenFavoredEnemy) {
+      characterUpdate.favored_enemy = [...alreadyChosenEnemies, chosenFavoredEnemy].join(', ')
+    }
+    if (needsFavoredTerrain && chosenFavoredTerrain) {
+      characterUpdate.favored_terrain = [...alreadyChosenTerrains, chosenFavoredTerrain].join(', ')
     }
 
     // initiative_bonus is a stored value (dexMod + any flat bonus like Alert's +5), set once at
@@ -628,6 +646,38 @@ export default function LevelUpWizard({
                   )}
                 </div>
               )}
+              {needsFavoredEnemy && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">Choose an additional Favored Enemy:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {FAVORED_ENEMY_TYPES.filter((t) => !alreadyChosenEnemies.includes(t)).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setChosenFavoredEnemy(t)}
+                        className={`border rounded-sm py-2 text-sm transition-colors ${chosenFavoredEnemy === t ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {needsFavoredTerrain && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">Choose an additional Favored Terrain:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {FAVORED_TERRAIN_TYPES.filter((t) => !alreadyChosenTerrains.includes(t)).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setChosenFavoredTerrain(t)}
+                        className={`border rounded-sm py-2 text-sm transition-colors ${chosenFavoredTerrain === t ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -775,6 +825,8 @@ export default function LevelUpWizard({
                 {asiChoice === 'feat' && <li>Feat: {availableFeats.find((f) => f.id === chosenFeatId)?.name}</li>}
                 {featNeedsAbilityChoice && featAbilityChoice && <li>{ABILITY_LABELS[featAbilityChoice]} +1</li>}
                 {featNeedsSkillChoice && featSkillChoices.length > 0 && <li>New skill proficiencies: {featSkillChoices.join(', ')}</li>}
+                {needsFavoredEnemy && chosenFavoredEnemy && <li>Favored Enemy: {chosenFavoredEnemy}</li>}
+                {needsFavoredTerrain && chosenFavoredTerrain && <li>Favored Terrain: {chosenFavoredTerrain}</li>}
                 {character.class?.name === 'Barbarian' && newLevel === 20 && <li>Primal Champion: Strength and Constitution +4 (max 24)</li>}
               </ul>
               <button
