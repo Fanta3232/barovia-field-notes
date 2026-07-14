@@ -1672,13 +1672,14 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                   const matchingSlot = spellSlots.find((sl) => sl.slot_level === s.spells.level)
                   const canCast = matchingSlot ? matchingSlot.used_slots < matchingSlot.max_slots : false
                   const atWillSource = atWillSourceFor(s.spells.name)
+                  const miResource = resources.find((r) => r.name === `${s.spells.name} (Magic Initiate)`)
                   return (
                     <div key={s.spells.name} className="flex items-center justify-between mb-1.5">
                       <Tooltip
                         label={<span className="text-base">{s.spells.name}{s.is_prepared ? '' : s.is_always_known ? <span className="text-parchment/40 text-sm"> (always prepared)</span> : ''}</span>}
                         title={s.spells.name}
                         subtitle={`Level ${s.spells.level} · ${s.spells.school}`}
-                        body={atWillSource ? `${s.spells.description} Cast at will, no spell slot needed, via the ${atWillSource} invocation.` : s.spells.description}
+                        body={atWillSource ? `${s.spells.description} Cast at will, no spell slot needed, via the ${atWillSource} invocation.` : miResource ? `${s.spells.description} Granted by Magic Initiate — cast once per long rest without a spell slot, or use a normal spell slot once that free cast is spent.` : s.spells.description}
                       />
                       {atWillSource ? (
                         <Tooltip
@@ -1686,11 +1687,24 @@ export default function CharacterSheetPage({ params }: { params: { id: string } 
                           title="At-Will Casting"
                           body={`Granted by the ${atWillSource} invocation — cast this as often as you like, no spell slot required.`}
                         />
-                      ) : matchingSlot ? (
-                        <button onClick={() => adjustSlot(s.spells.level, 1)} disabled={!canCast} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle">
-                          Cast
-                        </button>
-                      ) : null}
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          {miResource && (
+                            <button
+                              onClick={() => adjustResource(miResource.name, -1)}
+                              disabled={miResource.current_value <= 0}
+                              className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle"
+                            >
+                              Free Cast ({miResource.current_value}/{miResource.max_value})
+                            </button>
+                          )}
+                          {matchingSlot && (
+                            <button onClick={() => adjustSlot(s.spells.level, 1)} disabled={!canCast} className="text-sm text-candle hover:text-parchment border border-mist rounded-full px-2 py-0.5 disabled:opacity-25 disabled:hover:text-candle">
+                              Cast
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })}

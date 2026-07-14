@@ -177,6 +177,13 @@ export default function LevelUpWizard({
   const [proficientSkillNames, setProficientSkillNames] = useState<string[]>([])
   const [chosenFavoredEnemy, setChosenFavoredEnemy] = useState<string | null>(null)
   const [chosenFavoredTerrain, setChosenFavoredTerrain] = useState<string | null>(null)
+  const [miClass, setMiClass] = useState<string | null>(null)
+  const [miCantripOptions, setMiCantripOptions] = useState<FeatOption[]>([])
+  const [miSpellOptions, setMiSpellOptions] = useState<FeatOption[]>([])
+  const [miChosenCantrips, setMiChosenCantrips] = useState<string[]>([])
+  const [miChosenSpell, setMiChosenSpell] = useState<string | null>(null)
+  const [miLoadingSpells, setMiLoadingSpells] = useState(false)
+  const [knownSpellNames, setKnownSpellNames] = useState<string[]>([])
   const [subclassOptions, setSubclassOptions] = useState<SubclassOption[]>([])
   const [chosenSubclassId, setChosenSubclassId] = useState<string | null>(null)
   const [asiChoice, setAsiChoice] = useState<'asi' | 'feat' | null>(null)
@@ -193,7 +200,7 @@ export default function LevelUpWizard({
     if (!open) return
     async function load() {
       setLoading(true)
-      const [featuresRes, subclassRes, featsRes] = await Promise.all([
+      const [featuresRes, subclassRes, featsRes, knownSpellsRes] = await Promise.all([
         supabase.from('class_features').select('name, description')
           .eq('class_id', character.class_id).eq('level', newLevel).is('subclass_id', null),
         willUnlockSubclass
@@ -202,10 +209,14 @@ export default function LevelUpWizard({
         isASILevel
           ? supabase.from('feats').select('id, name, description, prerequisite').eq('category', 'general').order('name')
           : Promise.resolve({ data: [] as FeatOption[] }),
+        isASILevel
+          ? supabase.from('character_spells').select('spells:spell_id(name)').eq('character_id', characterId)
+          : Promise.resolve({ data: [] as { spells: { name: string } }[] }),
       ])
       setNewFeatures((featuresRes.data ?? []) as ClassFeature[])
       setSubclassOptions((subclassRes.data ?? []) as unknown as SubclassOption[])
       setAvailableFeats((featsRes.data ?? []) as FeatOption[])
+      setKnownSpellNames(((knownSpellsRes.data ?? []) as unknown as { spells: { name: string } }[]).map((r) => r.spells?.name).filter(Boolean) as string[])
 
       const needsFightingStyle = ((featuresRes.data ?? []) as ClassFeature[]).some((f) => f.name === 'Fighting Style')
       if (needsFightingStyle && character.class?.name) {
@@ -270,6 +281,7 @@ export default function LevelUpWizard({
     setChosenInvocationIds([])
     setChosenMetamagicIds([])
     setChosenFavoredEnemy(null); setChosenFavoredTerrain(null)
+    setMiClass(null); setMiCantripOptions([]); setMiSpellOptions([]); setMiChosenCantrips([]); setMiChosenSpell(null)
     setChosenExpertiseSkills([])
   }, [open, character.class_id, newLevel, willUnlockSubclass, isASILevel])
 
@@ -329,6 +341,19 @@ export default function LevelUpWizard({
   const chosenFeatName = availableFeats.find((f) => f.id === chosenFeatId)?.name
   const featNeedsAbilityChoice = chosenFeatName === 'Resilient' || chosenFeatName === 'Athlete'
   const featNeedsSkillChoice = chosenFeatName === 'Skilled'
+  const featNeedsMagicInitiate = chosenFeatName === 'Magic Initiate'
+  const MAGIC_INITIATE_CLASSES = ['Bard', 'Cleric', 'Druid', 'Sorcerer', 'Warlock', 'Wizard']
+
+  async function loadMagicInitiateOptions(cls: string) {
+    setMiClass(cls); setMiChosenCantrips([]); setMiChosenSpell(null); setMiLoadingSpells(true)
+    const [cantripsRes, spellsRes] = await Promise.all([
+      supabase.from('spells').select('id, name, description').eq('level', 0).contains('classes', [cls]).order('name'),
+      supabase.from('spells').select('id, name, description').eq('level', 1).contains('classes', [cls]).order('name'),
+    ])
+    setMiCantripOptions(((cantripsRes.data ?? []) as { id: string; name: string; description: string }[]).filter((s) => !knownSpellNames.includes(s.name)).map((s) => ({ ...s, prerequisite: null })))
+    setMiSpellOptions(((spellsRes.data ?? []) as { id: string; name: string; description: string }[]).filter((s) => !knownSpellNames.includes(s.name)).map((s) => ({ ...s, prerequisite: null })))
+    setMiLoadingSpells(false)
+  }
   // Ranger gains an additional Favored Enemy at 6th and 14th level, and an additional Favored
   // Terrain at 6th and 10th — the character sheet only ever displays one comma-separated string
   // for each, so new picks are appended rather than needing a schema change.
@@ -342,7 +367,7 @@ export default function LevelUpWizard({
     (step === 'subclass' && chosenSubclassId !== null) ||
     (step === 'asi' && (
       (asiChoice === 'asi' && asiPicks.length === (asiMode === 'one' ? 1 : 2)) ||
-      (asiChoice === 'feat' && chosenFeatId !== null && (!featNeedsAbilityChoice || featAbilityChoice !== null) && (!featNeedsSkillChoice || featSkillChoices.length === 3))
+      (asiChoice === 'feat' && chosenFeatId !== null && (!featNeedsAbilityChoice || featAbilityChoice !== null) && (!featNeedsSkillChoice || featSkillChoices.length === 3) && (!featNeedsMagicInitiate || (miClass !== null && miChosenCantrips.length === 2 && miChosenSpell !== null)))
     )) ||
     (step === 'confirm')
 
@@ -451,6 +476,18 @@ export default function LevelUpWizard({
       tasks.push(supabase.from('character_skills').insert(
         featSkillChoices.map((skill_name) => ({ character_id: characterId, skill_name, expertise: false }))
       ))
+    }
+    if (asiChoice === 'feat' && featNeedsMagicInitiate && miClass && miChosenCantrips.length === 2 && miChosenSpell) {
+      const spellRows = [...miChosenCantrips, miChosenSpell].map((spell_id) => ({
+        character_id: characterId, spell_id, is_prepared: false, is_always_known: true,
+      }))
+      tasks.push(supabase.from('character_spells').insert(spellRows))
+      const chosenSpellName = miSpellOptions.find((s) => s.id === miChosenSpell)?.name
+      if (chosenSpellName) {
+        tasks.push(supabase.from('character_resources').insert({
+          character_id: characterId, name: `${chosenSpellName} (Magic Initiate)`, max_value: 1, current_value: 1, recharge: 'long_rest',
+        }))
+      }
     }
 
     // Spell slot recalculation, if this class casts spells.
@@ -803,6 +840,55 @@ export default function LevelUpWizard({
                   </div>
                 </div>
               )}
+              {featNeedsMagicInitiate && (
+                <div className="mt-3 pt-3 border-t border-mist/30">
+                  <p className="text-sm text-parchment/70 mb-2">Choose a class whose spell list you're drawing from:</p>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    {MAGIC_INITIATE_CLASSES.map((cls) => (
+                      <button
+                        key={cls}
+                        onClick={() => loadMagicInitiateOptions(cls)}
+                        className={`border rounded-sm py-2 text-sm transition-colors ${miClass === cls ? 'border-candle text-candle' : 'border-mist text-parchment/70 hover:border-candle/50'}`}
+                      >
+                        {cls}
+                      </button>
+                    ))}
+                  </div>
+                  {miLoadingSpells && <p className="text-sm text-parchment/40 italic">Loading spell options...</p>}
+                  {miClass && !miLoadingSpells && (
+                    <>
+                      <p className="text-sm text-parchment/70 mb-2">
+                        Choose 2 cantrips ({miChosenCantrips.length} / 2 picked):
+                      </p>
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
+                        {miCantripOptions.map((s) => {
+                          const picked = miChosenCantrips.includes(s.id)
+                          const disabled = !picked && miChosenCantrips.length >= 2
+                          return (
+                            <label key={s.id} className={`block border rounded-sm p-2 cursor-pointer transition-colors ${picked ? 'border-candle' : 'border-mist hover:border-candle/50'} ${disabled ? 'opacity-40' : ''}`}>
+                              <div className="flex items-center gap-2">
+                                <input type="checkbox" disabled={disabled} checked={picked} onChange={() => setMiChosenCantrips((prev) => picked ? prev.filter((i) => i !== s.id) : prev.length >= 2 ? prev : [...prev, s.id])} />
+                                <span className="text-base text-candle">{s.name}</span>
+                              </div>
+                            </label>
+                          )
+                        })}
+                      </div>
+                      <p className="text-sm text-parchment/70 mb-2">Choose 1 first-level spell — castable once per long rest without a slot:</p>
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                        {miSpellOptions.map((s) => (
+                          <label key={s.id} className={`block border rounded-sm p-2 cursor-pointer transition-colors ${miChosenSpell === s.id ? 'border-candle' : 'border-mist hover:border-candle/50'}`}>
+                            <div className="flex items-center gap-2">
+                              <input type="radio" name="mi-spell" checked={miChosenSpell === s.id} onChange={() => setMiChosenSpell(s.id)} />
+                              <span className="text-base text-candle">{s.name}</span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -825,6 +911,7 @@ export default function LevelUpWizard({
                 {asiChoice === 'feat' && <li>Feat: {availableFeats.find((f) => f.id === chosenFeatId)?.name}</li>}
                 {featNeedsAbilityChoice && featAbilityChoice && <li>{ABILITY_LABELS[featAbilityChoice]} +1</li>}
                 {featNeedsSkillChoice && featSkillChoices.length > 0 && <li>New skill proficiencies: {featSkillChoices.join(', ')}</li>}
+                {featNeedsMagicInitiate && miClass && <li>Magic Initiate ({miClass}): {[...miChosenCantrips.map((id) => miCantripOptions.find((s) => s.id === id)?.name), miSpellOptions.find((s) => s.id === miChosenSpell)?.name].filter(Boolean).join(', ')}</li>}
                 {needsFavoredEnemy && chosenFavoredEnemy && <li>Favored Enemy: {chosenFavoredEnemy}</li>}
                 {needsFavoredTerrain && chosenFavoredTerrain && <li>Favored Terrain: {chosenFavoredTerrain}</li>}
                 {character.class?.name === 'Barbarian' && newLevel === 20 && <li>Primal Champion: Strength and Constitution +4 (max 24)</li>}
